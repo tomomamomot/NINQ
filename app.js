@@ -10,9 +10,18 @@ const DEFAULT_SETTINGS = {
   defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0,
   companies: [], companyRates: [], expenseItems: DEFAULT_EXPENSE_ITEMS.map((label, index) => ({ id: `exp${index + 1}`, label })),
   companyInvoiceModes: {}, showSales: true, showSubcontract: true, googleClientId: '', googleCalendarId: 'primary', googleStoreMode: 'local', googleAccountEmail: '', googleSyncEnabled: false,
-  salesTotalParts: { labor: true, overtime: true, expenses: false },
+  salesTotalParts: { labor: true, overtime: true, expenses: false }, settingUpdatedAt: {},
 };
 const DEFAULT_STATE = { entries: [], receipts: [], settings: DEFAULT_SETTINGS };
+const SETTINGS_SECTIONS = {
+  profile: ['name', 'postalCode', 'address', 'tel', 'companyName'],
+  bank: ['bank', 'branch', 'accountNo', 'accountName'],
+  invoice: ['invoiceNo', 'invoiceEnabled', 'taxRate', 'stampImage', 'companyInvoiceModes'],
+  companies: ['companies', 'companyRates'],
+  expenses: ['expenseItems'],
+  display: ['showSales', 'showSubcontract', 'salesTotalParts'],
+  google: ['googleClientId', 'googleCalendarId', 'googleStoreMode', 'googleAccountEmail', 'googleSyncEnabled'],
+};
 
 let state = loadState();
 let cursor = startOfMonth(new Date());
@@ -27,6 +36,8 @@ let datePickerCursor = startOfMonth(new Date());
 let googleTokenClient = null;
 let googleAccessToken = '';
 let settingsAutosaveTimer = null;
+let settingsAutosaveSections = new Set();
+let driveAuthPrompt = 'consent';
 
 function loadState() {
   try {
@@ -52,6 +63,7 @@ function normalizeState(source) {
   settings.expenseItems = normalizeExpenseItems(settings.expenseItems);
   settings.companyInvoiceModes = settings.companyInvoiceModes && typeof settings.companyInvoiceModes === 'object' ? settings.companyInvoiceModes : {};
   settings.salesTotalParts = { ...DEFAULT_SETTINGS.salesTotalParts, ...(settings.salesTotalParts || {}) };
+  settings.settingUpdatedAt = settings.settingUpdatedAt && typeof settings.settingUpdatedAt === 'object' ? settings.settingUpdatedAt : {};
   const entries = Array.isArray(source.entries) ? source.entries.map(normalizeEntry) : [];
   const receipts = Array.isArray(source.receipts) ? source.receipts.map(normalizeReceipt) : [];
   return { entries, receipts, settings };
@@ -239,6 +251,33 @@ function renderCompanyPresetList() {
       <button type="button" data-remove-company-preset="${index}" aria-label="削除">×</button>
     </div>`).join('') : '<div class="empty-inline">まだ登録がありません</div>';
 }
+function markSettingsSections(sections) {
+  const list = Array.isArray(sections) ? sections : [sections];
+  const now = new Date().toISOString();
+  state.settings.settingUpdatedAt = { ...(state.settings.settingUpdatedAt || {}) };
+  list.filter(Boolean).forEach((section) => { state.settings.settingUpdatedAt[section] = now; });
+  state.settings.updatedAt = now;
+}
+function settingsSectionTime(settings, section) {
+  return Date.parse(settings?.settingUpdatedAt?.[section] || settings?.updatedAt || '') || 0;
+}
+function mergeSettingsBySection(localSettings, remoteSettings) {
+  const local = normalizeState({ settings: localSettings }).settings;
+  const remote = normalizeState({ settings: remoteSettings }).settings;
+  const merged = { ...local };
+  Object.entries(SETTINGS_SECTIONS).forEach(([section, keys]) => {
+    const source = settingsSectionTime(remote, section) > settingsSectionTime(local, section) ? remote : local;
+    keys.forEach((key) => { merged[key] = clone(source[key]); });
+  });
+  merged.settingUpdatedAt = { ...(local.settingUpdatedAt || {}) };
+  Object.keys(SETTINGS_SECTIONS).forEach((section) => {
+    const localTime = settingsSectionTime(local, section);
+    const remoteTime = settingsSectionTime(remote, section);
+    merged.settingUpdatedAt[section] = remoteTime > localTime ? remote.settingUpdatedAt?.[section] || remote.updatedAt || '' : local.settingUpdatedAt?.[section] || local.updatedAt || '';
+  });
+  merged.updatedAt = new Date(Math.max(Date.parse(local.updatedAt || '') || 0, Date.parse(remote.updatedAt || '') || 0, ...Object.values(merged.settingUpdatedAt).map((value) => Date.parse(value || '') || 0))).toISOString();
+  return merged;
+}
 function updateCompanyPresetField(id, field, value) {
   const values = companyPresetValues();
   const item = values.find((preset) => preset.id === id); if (!item) return;
@@ -256,7 +295,7 @@ function updateCompanyPresetField(id, field, value) {
     item[field] = num(value);
   }
   writeCompanyPresetValues(values);
-  scheduleSettingsAutosave();
+  scheduleSettingsAutosave({ section: 'companies' });
 }
 function renderSettingListEditors() { renderCompanyPresetList(); renderEditableList('st-expense-list', 'st-expenses'); }
 function addCompanyPreset() {
@@ -267,14 +306,14 @@ function addCompanyPreset() {
   writeCompanyPresetValues(next);
   ['st-company-new', 'st-company-official-new', 'st-company-day-new', 'st-company-night-new', 'st-company-ot-new'].forEach((id) => { const el = document.getElementById(id); if (el) el.value = ''; });
   renderCompanyPresetList();
-  scheduleSettingsAutosave({ immediate: true });
+  scheduleSettingsAutosave({ immediate: true, section: 'companies' });
 }
 function addSettingListItem(hiddenId, inputId) {
   const input = document.getElementById(inputId); if (!input) return;
   const value = input.value.trim(); if (!value) return;
   const values = [...new Set([...settingListValues(hiddenId), value])];
   writeSettingList(hiddenId, values); input.value = ''; renderSettingListEditors();
-  scheduleSettingsAutosave({ immediate: true });
+  scheduleSettingsAutosave({ immediate: true, section: 'expenses' });
 }
 function showSaveFeedback(message) {
   const el = document.getElementById('save-status'); if (!el) { alert(message); return; }
@@ -836,12 +875,14 @@ function upsertEntries(entries) {
   cursor = startOfMonth(fromYmd(entries[0].date));
   saveState(); renderAll();
 }
-function saveGoogleSettings() {
+function saveGoogleSettings({ feedback = true, render = true, touch = true } = {}) {
   state.settings.googleClientId = document.getElementById('google-client-id')?.value.trim() || '';
   state.settings.googleCalendarId = document.getElementById('google-calendar-id')?.value.trim() || 'primary';
   state.settings.googleStoreMode = document.getElementById('google-store-mode')?.value || 'local';
-  state.settings.updatedAt = new Date().toISOString();
-  saveState(); renderAll(); setSyncLog('Google設定を保存しました');
+  if (touch) markSettingsSections('google');
+  saveState();
+  if (render) renderAll();
+  if (feedback) setSyncLog('Google設定を保存しました');
 }
 function setSyncLog(message) { const log = document.getElementById('sync-log'); if (log) log.textContent = message; }
 function localModifiedAt(targetState = state) {
@@ -889,11 +930,11 @@ async function getDriveToken(prompt = '') {
   });
 }
 async function driveFetch(url, options = {}, retry = true) {
-  const token = googleAccessToken || await getDriveToken('consent');
+  const token = googleAccessToken || await getDriveToken(driveAuthPrompt);
   const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } });
   if (response.status === 401 && retry) {
     googleAccessToken = '';
-    await getDriveToken('consent');
+    await getDriveToken(driveAuthPrompt);
     return driveFetch(url, options, false);
   }
   if (!response.ok) throw new Error(await response.text() || `Google Driveエラー ${response.status}`);
@@ -948,33 +989,32 @@ function mergeById(localItems = [], remoteItems = [], dateKeys = ['updatedAt', '
 }
 function mergeDriveState(remotePayload) {
   const remoteState = normalizeState(remotePayload.state || remotePayload);
-  const remoteSettingsTime = Date.parse(remoteState.settings?.updatedAt || '') || 0;
-  const localSettingsTime = Date.parse(state.settings?.updatedAt || '') || 0;
-  const settings = remoteSettingsTime > localSettingsTime ? remoteState.settings : state.settings;
   return normalizeState({
-    settings,
+    settings: mergeSettingsBySection(state.settings, remoteState.settings),
     entries: mergeById(state.entries, remoteState.entries),
     receipts: mergeById(state.receipts || [], remoteState.receipts || [], ['updatedAt', 'importedAt']),
   });
 }
 async function loginGoogleDrive() {
   try {
-    saveGoogleSettings();
+    saveGoogleSettings({ feedback: false, render: false, touch: false });
     await getDriveToken('consent');
     setSyncLog('Googleログインしました。今すぐ同期できます');
   } catch (error) {
     setSyncLog(error.message || 'Googleログインに失敗しました');
   }
 }
-async function syncGoogleDrive() {
+async function syncGoogleDrive({ auto = false } = {}) {
+  const previousPrompt = driveAuthPrompt;
   try {
-    saveGoogleSettings();
-    setSyncLog('Google Driveと同期中です...');
-    await getDriveToken(googleAccessToken ? '' : 'consent');
+    driveAuthPrompt = auto ? '' : 'consent';
+    saveGoogleSettings({ feedback: false, render: false, touch: false });
+    setSyncLog(auto ? 'Google Driveから最新データを確認中です...' : 'Google Driveと同期中です...');
+    await getDriveToken(googleAccessToken ? '' : driveAuthPrompt);
     const file = await findDriveSyncFile();
     if (!file) {
       await createDriveSyncFile(JSON.stringify(syncPayload(), null, 2));
-      setSyncLog('この端末のデータをGoogle Driveに保存しました');
+      setSyncLog(auto ? '同期ファイルを作成しました' : 'この端末のデータをGoogle Driveに保存しました');
       return;
     }
     const remotePayload = await readDriveSyncFile(file.id);
@@ -982,10 +1022,17 @@ async function syncGoogleDrive() {
     saveState();
     await updateDriveSyncFile(file.id, JSON.stringify(syncPayload(), null, 2));
     renderAll();
-    setSyncLog(`同期しました。予定 ${state.entries.length}件`);
+    setSyncLog(`${auto ? '起動時に' : ''}同期しました。予定 ${state.entries.length}件`);
   } catch (error) {
-    setSyncLog(error.message || 'Google Drive同期に失敗しました');
+    setSyncLog(auto ? '自動同期できませんでした。Googleログインしてください' : (error.message || 'Google Drive同期に失敗しました'));
+  } finally {
+    driveAuthPrompt = previousPrompt;
   }
+}
+function autoSyncGoogleDriveOnStartup() {
+  if (!state.settings.googleClientId) return;
+  if (!navigator.onLine) { setSyncLog('通信できません。端末内データを表示中です'); return; }
+  window.setTimeout(() => syncGoogleDrive({ auto: true }), 700);
 }
 function downloadText(filename, text, type) {
   const blob = new Blob([text], { type });
@@ -1117,7 +1164,7 @@ function handleReceiptFiles(files) {
   state.receipts = [...(state.receipts || []), ...list.map((file) => normalizeReceipt({ fileName: file.name, importedAt: new Date().toISOString(), category: guessReceiptCategory(file.name), date: guessReceiptDate(file.name), amount: guessReceiptAmount(file.name), status: '仕分け候補' }))];
   saveState(); renderReceiptScreen();
 }
-function persistSettingsFromForm({ render = false, feedback = '' } = {}) {
+function persistSettingsFromForm({ render = false, feedback = '', sections = [] } = {}) {
   const linesToObjects = (text, previous) => text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((label, index) => ({ id: previous[index]?.id || `exp${index + 1}`, label }));
   const companyRates = companyPresetValues();
   const salesTotalParts = {
@@ -1125,7 +1172,8 @@ function persistSettingsFromForm({ render = false, feedback = '' } = {}) {
     overtime: document.getElementById('tgl-sales-overtime')?.classList.contains('on') !== false,
     expenses: document.getElementById('tgl-sales-expenses')?.classList.contains('on') === true,
   };
-  state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: linesToObjects(document.getElementById('st-expenses').value, expenseItems()), updatedAt: new Date().toISOString() };
+  state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: linesToObjects(document.getElementById('st-expenses').value, expenseItems()) };
+  markSettingsSections(sections.length ? sections : Object.keys(SETTINGS_SECTIONS).filter((section) => section !== 'google'));
   state.entries = state.entries.map((entry) => { const nextExpenses = {}; expenseItems().forEach((item) => { nextExpenses[item.id] = num(entry.expenses?.[item.id]); }); return { ...entry, expenses: nextExpenses }; });
   saveState();
   if (render) renderAll();
@@ -1134,14 +1182,18 @@ function persistSettingsFromForm({ render = false, feedback = '' } = {}) {
 function saveSettings() {
   window.clearTimeout(settingsAutosaveTimer);
   settingsAutosaveTimer = null;
+  settingsAutosaveSections.clear();
   persistSettingsFromForm({ render: true, feedback: '設定を保存しました' });
 }
-function scheduleSettingsAutosave({ immediate = false } = {}) {
+function scheduleSettingsAutosave({ immediate = false, section = '', sections = [] } = {}) {
   if (!document.getElementById('sc-st')) return;
   window.clearTimeout(settingsAutosaveTimer);
+  [section, ...sections].filter(Boolean).forEach((item) => settingsAutosaveSections.add(item));
   const save = () => {
+    const targetSections = [...settingsAutosaveSections];
+    settingsAutosaveSections.clear();
     settingsAutosaveTimer = null;
-    persistSettingsFromForm({ render: false, feedback: '自動保存しました' });
+    persistSettingsFromForm({ render: false, feedback: '自動保存しました', sections: targetSections });
   };
   if (immediate) { save(); return; }
   settingsAutosaveTimer = window.setTimeout(save, 900);
@@ -1149,15 +1201,17 @@ function scheduleSettingsAutosave({ immediate = false } = {}) {
 function flushSettingsAutosave() {
   if (!settingsAutosaveTimer) return;
   window.clearTimeout(settingsAutosaveTimer);
+  const targetSections = [...settingsAutosaveSections];
+  settingsAutosaveSections.clear();
   settingsAutosaveTimer = null;
-  persistSettingsFromForm({ render: false });
+  persistSettingsFromForm({ render: false, sections: targetSections });
 }
 function handleStampFile(file) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
     state.settings.stampImage = String(reader.result || '');
-    state.settings.updatedAt = new Date().toISOString();
+    markSettingsSections('invoice');
     saveState();
     renderAll();
     showSaveFeedback('印鑑を登録しました');
@@ -1166,7 +1220,7 @@ function handleStampFile(file) {
 }
 function clearStampImage() {
   state.settings.stampImage = '';
-  state.settings.updatedAt = new Date().toISOString();
+  markSettingsSections('invoice');
   saveState();
   renderAll();
   showSaveFeedback('印鑑を削除しました');
@@ -1225,7 +1279,7 @@ function printView(kind) {
 function bindEvents() {
   document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => { if (activeScreen === 'st') flushSettingsAutosave(); activeScreen = button.dataset.screen; renderAll(); }));
   const salesToggle = document.getElementById('toggle-sales-btn');
-  if (salesToggle) salesToggle.addEventListener('click', () => { state.settings.showSales = !state.settings.showSales; saveState(); renderAll(); });
+  if (salesToggle) salesToggle.addEventListener('click', () => { state.settings.showSales = !state.settings.showSales; markSettingsSections('display'); saveState(); renderAll(); });
   ['prev-month-btn', 'sub-prev-month-btn', 'inv-prev-month-btn'].forEach((id) => document.getElementById(id).addEventListener('click', () => { cursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1); if (monthKey(selectedDate) !== monthKey(cursor)) selectedDate = toYmd(cursor); renderAll(); }));
   ['next-month-btn', 'sub-next-month-btn', 'inv-next-month-btn'].forEach((id) => document.getElementById(id).addEventListener('click', () => { cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1); if (monthKey(selectedDate) !== monthKey(cursor)) selectedDate = toYmd(cursor); renderAll(); }));
   document.getElementById('fab-main').addEventListener('click', () => { closeDayModal(); openModal('self'); });
@@ -1248,9 +1302,9 @@ function bindEvents() {
   document.getElementById('stamp-pick-btn')?.addEventListener('click', () => document.getElementById('st-stamp-file')?.click());
   document.getElementById('st-stamp-file')?.addEventListener('change', (event) => { handleStampFile(event.target.files?.[0]); event.target.value = ''; });
   document.getElementById('stamp-clear-btn')?.addEventListener('click', clearStampImage);
-  document.getElementById('tgl-inv').addEventListener('click', () => { document.getElementById('tgl-inv').classList.toggle('on'); document.getElementById('inv-no-row').classList.toggle('hidden', !document.getElementById('tgl-inv').classList.contains('on')); scheduleSettingsAutosave({ immediate: true }); });
-  document.getElementById('tgl-subcontract')?.addEventListener('click', () => { document.getElementById('tgl-subcontract').classList.toggle('on'); scheduleSettingsAutosave({ immediate: true }); });
-  ['tgl-sales-labor', 'tgl-sales-overtime', 'tgl-sales-expenses'].forEach((id) => document.getElementById(id)?.addEventListener('click', () => { document.getElementById(id).classList.toggle('on'); scheduleSettingsAutosave({ immediate: true }); }));
+  document.getElementById('tgl-inv').addEventListener('click', () => { document.getElementById('tgl-inv').classList.toggle('on'); document.getElementById('inv-no-row').classList.toggle('hidden', !document.getElementById('tgl-inv').classList.contains('on')); scheduleSettingsAutosave({ immediate: true, section: 'invoice' }); });
+  document.getElementById('tgl-subcontract')?.addEventListener('click', () => { document.getElementById('tgl-subcontract').classList.toggle('on'); scheduleSettingsAutosave({ immediate: true, section: 'display' }); });
+  ['tgl-sales-labor', 'tgl-sales-overtime', 'tgl-sales-expenses'].forEach((id) => document.getElementById(id)?.addEventListener('click', () => { document.getElementById(id).classList.toggle('on'); scheduleSettingsAutosave({ immediate: true, section: 'display' }); }));
   document.getElementById('modal-bg').addEventListener('click', (event) => { if (event.target.id === 'modal-bg') closeModal(); });
   document.addEventListener('click', (event) => {
     if (event.target.id === 'date-picker-bg' || event.target.matches('[data-date-picker-cancel]')) { closeDatePicker(); return; }
@@ -1262,9 +1316,9 @@ function bindEvents() {
     const datePickerInput = event.target.closest('[data-date-picker]');
     if (datePickerInput) { openDatePicker(datePickerInput); return; }
     const removeCompanyPreset = event.target.closest('[data-remove-company-preset]');
-    if (removeCompanyPreset) { const values = companyPresetValues().filter((_, index) => index !== Number(removeCompanyPreset.dataset.removeCompanyPreset)); writeCompanyPresetValues(values); renderCompanyPresetList(); scheduleSettingsAutosave({ immediate: true }); return; }
+    if (removeCompanyPreset) { const values = companyPresetValues().filter((_, index) => index !== Number(removeCompanyPreset.dataset.removeCompanyPreset)); writeCompanyPresetValues(values); renderCompanyPresetList(); scheduleSettingsAutosave({ immediate: true, section: 'companies' }); return; }
     const removeSettingItem = event.target.closest('[data-remove-setting-item]');
-    if (removeSettingItem) { const hiddenId = removeSettingItem.dataset.removeSettingItem; const index = Number(removeSettingItem.dataset.removeIndex); const values = settingListValues(hiddenId).filter((_, itemIndex) => itemIndex !== index); writeSettingList(hiddenId, values); renderSettingListEditors(); scheduleSettingsAutosave({ immediate: true }); return; }
+    if (removeSettingItem) { const hiddenId = removeSettingItem.dataset.removeSettingItem; const index = Number(removeSettingItem.dataset.removeIndex); const values = settingListValues(hiddenId).filter((_, itemIndex) => itemIndex !== index); writeSettingList(hiddenId, values); renderSettingListEditors(); scheduleSettingsAutosave({ immediate: true, section: 'expenses' }); return; }
     const closeDayButton = event.target.closest('[data-close-day-modal]');
     if (closeDayButton || event.target.id === 'day-modal-bg') { closeDayModal(); return; }
     const menuButton = event.target.closest('#menu-toggle-btn,[data-menu-open]');
@@ -1276,7 +1330,7 @@ function bindEvents() {
     const screenLink = event.target.closest('[data-screen-link]');
     if (screenLink) { if (activeScreen === 'st') flushSettingsAutosave(); activeScreen = screenLink.dataset.screenLink; if (activeScreen !== 'cal') closeDayModal(); renderAll(); return; }
     const otherSales = event.target.closest('[data-sales-toggle]');
-    if (otherSales) { state.settings.showSales = !state.settings.showSales; saveState(); renderAll(); return; }
+    if (otherSales) { state.settings.showSales = !state.settings.showSales; markSettingsSections('display'); saveState(); renderAll(); return; }
     const dayButton = event.target.closest('.cal-day');
     if (dayButton) { openDayModal(dayButton.dataset.date); return; }
     const addDate = event.target.closest('[data-add-date]');
@@ -1311,7 +1365,7 @@ function bindEvents() {
   document.addEventListener('change', (event) => {
     if (event.target.id === 'f-date' || event.target.id === 'f-end-date') { renderRangeExclusions(); return; }
     if (event.target.id === 'google-export-start' || event.target.id === 'google-export-end') { renderSyncScreen(); return; }
-    if (event.target.matches('#st-tax')) { scheduleSettingsAutosave({ immediate: true }); return; }
+    if (event.target.matches('#st-tax')) { scheduleSettingsAutosave({ immediate: true, section: 'invoice' }); return; }
     if (event.target.matches('[data-range-exclude]')) { event.target.closest('.range-exclude-chip')?.classList.toggle('checked', event.target.checked); return; }
     if (event.target.id === 'f-company-select') { const input = document.getElementById('f-company'); if (input && event.target.value) { input.value = event.target.value; applyCompanyRate(event.target.value); updateSubcontractDiff(); } return; }
     if (event.target.matches('[data-receipt-category]')) { updateReceiptField(event.target.dataset.receiptCategory, { category: event.target.value, status: '確認済み' }); renderAll(); return; }
@@ -1324,7 +1378,9 @@ function bindEvents() {
   });
 
   document.addEventListener('input', (event) => {
-    if (event.target.matches('#st-name,#st-postal,#st-addr,#st-tel,#st-co,#st-bank,#st-branch,#st-accno,#st-accname,#st-invno')) scheduleSettingsAutosave();
+    if (event.target.matches('#st-name,#st-postal,#st-addr,#st-tel,#st-co')) scheduleSettingsAutosave({ section: 'profile' });
+    if (event.target.matches('#st-bank,#st-branch,#st-accno,#st-accname')) scheduleSettingsAutosave({ section: 'bank' });
+    if (event.target.matches('#st-invno')) scheduleSettingsAutosave({ section: 'invoice' });
     if (event.target.matches('[data-company-preset-field]')) updateCompanyPresetField(event.target.dataset.companyPresetId, event.target.dataset.companyPresetField, event.target.value);
     if (event.target.matches('#entry-form input, #entry-form textarea, #entry-form select')) updateSubcontractDiff();
   });
@@ -1338,5 +1394,5 @@ function bindEvents() {
 }
 
 function registerPwa() { if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('sw failed', error)); }
-function init() { bindEvents(); renderAll(); registerPwa(); }
+function init() { bindEvents(); renderAll(); registerPwa(); autoSyncGoogleDriveOnStartup(); }
 document.addEventListener('DOMContentLoaded', init);
