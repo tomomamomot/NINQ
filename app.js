@@ -3,7 +3,7 @@ const STORE_KEY = 'ninq-v2';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
-const APP_VERSION = 'v2026.05.20-1';
+const APP_VERSION = 'v2026.05.20-2';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
