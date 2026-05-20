@@ -3,7 +3,7 @@ const STORE_KEY = 'ninq-v2';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
-const APP_VERSION = 'v2026.05.20-2';
+const APP_VERSION = 'v2026.05.20-3';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
@@ -266,11 +266,46 @@ function markSettingsSections(sections) {
 function settingsSectionTime(settings, section) {
   return Date.parse(settings?.settingUpdatedAt?.[section] || settings?.updatedAt || '') || 0;
 }
+function mergeCompanyPresetLists(localSettings, remoteSettings) {
+  const localTime = settingsSectionTime(localSettings, 'companies');
+  const remoteTime = settingsSectionTime(remoteSettings, 'companies');
+  const byName = new Map();
+  const mergeItem = (preset, sourceTime) => {
+    const key = String(preset.name || '').trim().toLowerCase();
+    if (!key) return;
+    const existing = byName.get(key);
+    if (!existing) {
+      byName.set(key, { ...preset, _time: sourceTime });
+      return;
+    }
+    const incomingIsNewer = sourceTime >= existing._time;
+    const preferred = incomingIsNewer ? preset : existing;
+    const fallback = incomingIsNewer ? existing : preset;
+    byName.set(key, {
+      id: existing.id || preset.id || crypto.randomUUID(),
+      name: preferred.name || fallback.name,
+      officialName: preferred.officialName || fallback.officialName || preferred.name || fallback.name,
+      dayRate: num(preferred.dayRate) || num(fallback.dayRate),
+      nightRate: num(preferred.nightRate) || num(fallback.nightRate),
+      otRate: num(preferred.otRate) || num(fallback.otRate),
+      _time: Math.max(existing._time || 0, sourceTime || 0),
+    });
+  };
+  normalizeCompanyRates(localSettings.companyRates, localSettings.companies).forEach((preset) => mergeItem(preset, localTime));
+  normalizeCompanyRates(remoteSettings.companyRates, remoteSettings.companies).forEach((preset) => mergeItem(preset, remoteTime));
+  return [...byName.values()].map(({ _time, ...preset }) => preset).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+}
 function mergeSettingsBySection(localSettings, remoteSettings) {
   const local = normalizeState({ settings: localSettings }).settings;
   const remote = normalizeState({ settings: remoteSettings }).settings;
   const merged = { ...local };
   Object.entries(SETTINGS_SECTIONS).forEach(([section, keys]) => {
+    if (section === 'companies') {
+      const companyRates = mergeCompanyPresetLists(local, remote);
+      merged.companyRates = companyRates;
+      merged.companies = companyRates.map((item) => item.name);
+      return;
+    }
     const source = settingsSectionTime(remote, section) > settingsSectionTime(local, section) ? remote : local;
     keys.forEach((key) => { merged[key] = clone(source[key]); });
   });
