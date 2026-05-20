@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
-const APP_VERSION = 'v2026.05.20-5';
+const APP_VERSION = 'v2026.05.20-6';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
@@ -221,7 +221,7 @@ function editingGroupIds() {
   return entryRangeGroup(entry).ids;
 }
 function expenseItems() { return normalizeExpenseItems(state.settings.expenseItems); }
-function companyOptions() { return [...new Set([...companyPresets().map((item) => item.name), ...state.settings.companies, ...state.entries.map((entry) => entry.company).filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'ja')); }
+function companyOptions() { return companyPresets().map((item) => item.name).sort((a, b) => a.localeCompare(b, 'ja')); }
 function companyPresets() { return normalizeCompanyRates(state.settings.companyRates, state.settings.companies); }
 function companyPresetByName(name) { return companyPresets().find((item) => item.name === name); }
 function companyOfficialName(name) { return companyPresetByName(name)?.officialName || name; }
