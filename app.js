@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
-const APP_VERSION = 'v2026.05.20-4';
+const APP_VERSION = 'v2026.05.20-5';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
@@ -684,7 +684,7 @@ function renderSyncScreen() {
   const backupStatus = document.getElementById('backup-status'); if (backupStatus) backupStatus.textContent = `${state.entries.length}予定`;
   const clientInput = document.getElementById('google-client-id'); if (clientInput && !clientInput.value) clientInput.value = state.settings.googleClientId || '';
   const driveStatus = document.getElementById('drive-sync-status'); if (driveStatus) driveStatus.textContent = googleAccessToken ? 'ログイン済み' : (state.settings.googleClientId ? '設定済み' : '未設定');
-  const log = document.getElementById('sync-log'); if (log && !log.textContent) log.textContent = 'Googleログイン後、開いた時はクラウド確認、変更後はクラウド保存します。両方に変更がある時は勝手に上書きしません';
+  const log = document.getElementById('sync-log'); if (log && !log.textContent) log.textContent = 'PCで変更したら「この端末から送る」。スマホで開いたら「クラウドから受け取る」。スマホで変更した時は逆に使います';
 }
 function renderReceiptScreen() {
   const sub = document.getElementById('receipt-sub'); if (sub) sub.textContent = `${state.receipts?.length || 0}件`;
@@ -946,13 +946,10 @@ function saveGoogleSettings({ feedback = true, render = true, touch = true } = {
   if (feedback) setSyncLog('Google設定を保存しました');
 }
 function setSyncLog(message) { const log = document.getElementById('sync-log'); if (log) log.textContent = message; }
-function scheduleDriveAutoSync({ delay = 2400, message = '変更をクラウドへ保存します...' } = {}) {
-  if (!state.settings.googleClientId) return;
-  if (!navigator.onLine) { setSyncLog('端末内に保存しました。通信できるときに同期してください'); return; }
-  if (!googleAccessToken) { setSyncLog('端末内に保存しました。Googleログイン後に同期できます'); return; }
+function scheduleDriveAutoSync() {
   window.clearTimeout(driveSyncTimer);
-  setSyncLog(message);
-  driveSyncTimer = window.setTimeout(() => syncGoogleDrive({ auto: true, reason: 'save' }), delay);
+  driveSyncTimer = null;
+  if (state.settings.googleClientId) setSyncLog('端末内に保存しました。別端末で使う時は「この端末から送る」を押してください');
 }
 function localModifiedAt(targetState = state) {
   const dates = [
@@ -1104,9 +1101,58 @@ async function loginGoogleDrive() {
   try {
     saveGoogleSettings({ feedback: false, render: false, touch: false });
     await getDriveToken('consent');
-    setSyncLog('Googleログインしました。今すぐ同期できます');
+    setSyncLog('Googleログインしました。送る/受け取るが使えます');
   } catch (error) {
     setSyncLog(error.message || 'Googleログインに失敗しました');
+  }
+}
+async function sendDeviceToDrive() {
+  if (activeScreen === 'st') flushSettingsAutosave();
+  window.clearTimeout(driveSyncTimer);
+  driveSyncTimer = null;
+  if (driveSyncInFlight) { setSyncLog('処理中です。少し待ってからもう一度押してください'); return; }
+  driveSyncInFlight = true;
+  const previousPrompt = driveAuthPrompt;
+  try {
+    driveAuthPrompt = 'consent';
+    saveGoogleSettings({ feedback: false, render: false, touch: false });
+    setSyncLog('この端末のデータをクラウドへ送っています...');
+    await getDriveToken(googleAccessToken ? '' : driveAuthPrompt);
+    await pushLocalDriveState();
+    setSyncLog(`この端末から送りました。予定 ${state.entries.length}件`);
+  } catch (error) {
+    setSyncLog(error.message || '送信に失敗しました');
+  } finally {
+    driveAuthPrompt = previousPrompt;
+    driveSyncInFlight = false;
+  }
+}
+async function receiveDeviceFromDrive() {
+  if (activeScreen === 'st') flushSettingsAutosave();
+  window.clearTimeout(driveSyncTimer);
+  driveSyncTimer = null;
+  if (driveSyncInFlight) { setSyncLog('処理中です。少し待ってからもう一度押してください'); return; }
+  if (hasLocalChangesSinceSync() && !confirm('この端末の未送信の変更を、クラウドのデータで置き換えます。受け取りますか？')) return;
+  driveSyncInFlight = true;
+  const previousPrompt = driveAuthPrompt;
+  try {
+    driveAuthPrompt = 'consent';
+    saveGoogleSettings({ feedback: false, render: false, touch: false });
+    setSyncLog('クラウドからデータを受け取っています...');
+    await getDriveToken(googleAccessToken ? '' : driveAuthPrompt);
+    const file = await findDriveSyncFile();
+    if (!file) { setSyncLog('クラウドにNINQデータがまだありません。先に別端末で「この端末から送る」を押してください'); return; }
+    const remotePayload = await readDriveSyncFile(file.id);
+    state = normalizeState(remotePayload.state || remotePayload);
+    saveState();
+    rememberDriveSync(remotePayload);
+    renderAll();
+    setSyncLog(`クラウドから受け取りました。予定 ${state.entries.length}件`);
+  } catch (error) {
+    setSyncLog(error.message || '受け取りに失敗しました');
+  } finally {
+    driveAuthPrompt = previousPrompt;
+    driveSyncInFlight = false;
   }
 }
 async function syncGoogleDrive({ auto = false, reason = '' } = {}) {
@@ -1197,11 +1243,6 @@ async function syncGoogleDrive({ auto = false, reason = '' } = {}) {
       scheduleDriveAutoSync({ delay: 800, message: '続けて変更をクラウドへ保存します...' });
     }
   }
-}
-function autoSyncGoogleDriveOnStartup() {
-  if (!state.settings.googleClientId) return;
-  if (!navigator.onLine) { setSyncLog('通信できません。端末内データを表示中です'); return; }
-  window.setTimeout(() => syncGoogleDrive({ auto: true }), 700);
 }
 function downloadText(filename, text, type) {
   const blob = new Blob([text], { type });
@@ -1465,7 +1506,8 @@ function bindEvents() {
   document.getElementById('st-expense-new')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); addSettingListItem('st-expenses', 'st-expense-new'); } });
   document.getElementById('save-google-settings-btn')?.addEventListener('click', saveGoogleSettings);
   document.getElementById('google-login-btn')?.addEventListener('click', loginGoogleDrive);
-  document.getElementById('drive-sync-now-btn')?.addEventListener('click', syncGoogleDrive);
+  document.getElementById('drive-send-device-btn')?.addEventListener('click', sendDeviceToDrive);
+  document.getElementById('drive-receive-device-btn')?.addEventListener('click', receiveDeviceFromDrive);
   document.getElementById('google-export-range-btn')?.addEventListener('click', exportRangeCalendarIcs);
   document.getElementById('google-open-selected-day-btn')?.addEventListener('click', openSelectedDayGoogleCalendar);
   document.getElementById('backup-export-btn')?.addEventListener('click', exportBackupJson);
@@ -1568,5 +1610,5 @@ function bindEvents() {
 }
 
 function registerPwa() { if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('sw failed', error)); }
-function init() { bindEvents(); renderAll(); registerPwa(); autoSyncGoogleDriveOnStartup(); }
+function init() { bindEvents(); renderAll(); registerPwa(); }
 document.addEventListener('DOMContentLoaded', init);
