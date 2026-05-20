@@ -38,6 +38,9 @@ let googleAccessToken = '';
 let settingsAutosaveTimer = null;
 let settingsAutosaveSections = new Set();
 let driveAuthPrompt = 'consent';
+let driveSyncTimer = null;
+let driveSyncInFlight = false;
+let driveSyncQueued = false;
 
 function loadState() {
   try {
@@ -864,7 +867,7 @@ function upsertEntry(entry) {
   state.entries = state.entries.filter((item) => item.id !== entry.id);
   state.entries.push(entry);
   selectedDate = entry.date; cursor = startOfMonth(fromYmd(entry.date));
-  saveState(); renderAll();
+  saveState(); renderAll(); scheduleDriveAutoSync();
 }
 function upsertEntries(entries) {
   const ids = new Set(entries.map((entry) => entry.id));
@@ -873,7 +876,7 @@ function upsertEntries(entries) {
   state.entries.push(...entries);
   selectedDate = entries[0].date;
   cursor = startOfMonth(fromYmd(entries[0].date));
-  saveState(); renderAll();
+  saveState(); renderAll(); scheduleDriveAutoSync();
 }
 function saveGoogleSettings({ feedback = true, render = true, touch = true } = {}) {
   state.settings.googleClientId = document.getElementById('google-client-id')?.value.trim() || '';
@@ -885,6 +888,14 @@ function saveGoogleSettings({ feedback = true, render = true, touch = true } = {
   if (feedback) setSyncLog('Google設定を保存しました');
 }
 function setSyncLog(message) { const log = document.getElementById('sync-log'); if (log) log.textContent = message; }
+function scheduleDriveAutoSync({ delay = 2400, message = '変更をクラウドへ保存します...' } = {}) {
+  if (!state.settings.googleClientId) return;
+  if (!navigator.onLine) { setSyncLog('端末内に保存しました。通信できるときに同期してください'); return; }
+  if (!googleAccessToken) { setSyncLog('端末内に保存しました。Googleログイン後に同期できます'); return; }
+  window.clearTimeout(driveSyncTimer);
+  setSyncLog(message);
+  driveSyncTimer = window.setTimeout(() => syncGoogleDrive({ auto: true, reason: 'save' }), delay);
+}
 function localModifiedAt(targetState = state) {
   const dates = [
     targetState.settings?.updatedAt,
@@ -1004,12 +1015,20 @@ async function loginGoogleDrive() {
     setSyncLog(error.message || 'Googleログインに失敗しました');
   }
 }
-async function syncGoogleDrive({ auto = false } = {}) {
+async function syncGoogleDrive({ auto = false, reason = '' } = {}) {
+  if (activeScreen === 'st') flushSettingsAutosave();
+  window.clearTimeout(driveSyncTimer);
+  driveSyncTimer = null;
+  if (driveSyncInFlight) {
+    driveSyncQueued = true;
+    return;
+  }
+  driveSyncInFlight = true;
   const previousPrompt = driveAuthPrompt;
   try {
     driveAuthPrompt = auto ? '' : 'consent';
     saveGoogleSettings({ feedback: false, render: false, touch: false });
-    setSyncLog(auto ? 'Google Driveから最新データを確認中です...' : 'Google Driveと同期中です...');
+    setSyncLog(auto && reason === 'save' ? '変更をGoogle Driveへ保存中です...' : (auto ? 'Google Driveから最新データを確認中です...' : 'Google Driveと同期中です...'));
     await getDriveToken(googleAccessToken ? '' : driveAuthPrompt);
     const file = await findDriveSyncFile();
     if (!file) {
@@ -1022,11 +1041,16 @@ async function syncGoogleDrive({ auto = false } = {}) {
     saveState();
     await updateDriveSyncFile(file.id, JSON.stringify(syncPayload(), null, 2));
     renderAll();
-    setSyncLog(`${auto ? '起動時に' : ''}同期しました。予定 ${state.entries.length}件`);
+    setSyncLog(`${auto && reason === 'save' ? '変更を保存しました。' : auto ? '起動時に同期しました。' : '同期しました。'}予定 ${state.entries.length}件`);
   } catch (error) {
     setSyncLog(auto ? '自動同期できませんでした。Googleログインしてください' : (error.message || 'Google Drive同期に失敗しました'));
   } finally {
     driveAuthPrompt = previousPrompt;
+    driveSyncInFlight = false;
+    if (driveSyncQueued) {
+      driveSyncQueued = false;
+      scheduleDriveAutoSync({ delay: 800, message: '続けて変更をクラウドへ保存します...' });
+    }
   }
 }
 function autoSyncGoogleDriveOnStartup() {
@@ -1156,13 +1180,14 @@ function applyReceiptToEntry(id) {
   receipt.appliedEntryId = entry.id;
   saveState();
   renderAll();
+  scheduleDriveAutoSync();
   showSaveFeedback('領収書を予定へ入力しました');
 }
 function handleReceiptFiles(files) {
   const list = Array.from(files || []);
   if (!list.length) return;
   state.receipts = [...(state.receipts || []), ...list.map((file) => normalizeReceipt({ fileName: file.name, importedAt: new Date().toISOString(), category: guessReceiptCategory(file.name), date: guessReceiptDate(file.name), amount: guessReceiptAmount(file.name), status: '仕分け候補' }))];
-  saveState(); renderReceiptScreen();
+  saveState(); renderReceiptScreen(); scheduleDriveAutoSync({ message: '領収書をクラウドへ保存します...' });
 }
 function persistSettingsFromForm({ render = false, feedback = '', sections = [] } = {}) {
   const linesToObjects = (text, previous) => text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((label, index) => ({ id: previous[index]?.id || `exp${index + 1}`, label }));
@@ -1178,6 +1203,7 @@ function persistSettingsFromForm({ render = false, feedback = '', sections = [] 
   saveState();
   if (render) renderAll();
   if (feedback) showSaveFeedback(feedback);
+  scheduleDriveAutoSync({ message: '設定をクラウドへ保存します...' });
 }
 function saveSettings() {
   window.clearTimeout(settingsAutosaveTimer);
@@ -1214,6 +1240,7 @@ function handleStampFile(file) {
     markSettingsSections('invoice');
     saveState();
     renderAll();
+    scheduleDriveAutoSync({ message: '印鑑設定をクラウドへ保存します...' });
     showSaveFeedback('印鑑を登録しました');
   };
   reader.readAsDataURL(file);
@@ -1223,6 +1250,7 @@ function clearStampImage() {
   markSettingsSections('invoice');
   saveState();
   renderAll();
+  scheduleDriveAutoSync({ message: '印鑑設定をクラウドへ保存します...' });
   showSaveFeedback('印鑑を削除しました');
 }
 function deleteEntry(id) {
@@ -1242,7 +1270,7 @@ function deleteEntry(id) {
         : entry
     ));
   }
-  saveState(); renderAll();
+  saveState(); renderAll(); scheduleDriveAutoSync();
 }
 function gcalEntry(id) {
   const entry = state.entries.find((item) => item.id === id); if (!entry) return;
@@ -1279,7 +1307,7 @@ function printView(kind) {
 function bindEvents() {
   document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => { if (activeScreen === 'st') flushSettingsAutosave(); activeScreen = button.dataset.screen; renderAll(); }));
   const salesToggle = document.getElementById('toggle-sales-btn');
-  if (salesToggle) salesToggle.addEventListener('click', () => { state.settings.showSales = !state.settings.showSales; markSettingsSections('display'); saveState(); renderAll(); });
+  if (salesToggle) salesToggle.addEventListener('click', () => { state.settings.showSales = !state.settings.showSales; markSettingsSections('display'); saveState(); renderAll(); scheduleDriveAutoSync({ message: '表示設定をクラウドへ保存します...' }); });
   ['prev-month-btn', 'sub-prev-month-btn', 'inv-prev-month-btn'].forEach((id) => document.getElementById(id).addEventListener('click', () => { cursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1); if (monthKey(selectedDate) !== monthKey(cursor)) selectedDate = toYmd(cursor); renderAll(); }));
   ['next-month-btn', 'sub-next-month-btn', 'inv-next-month-btn'].forEach((id) => document.getElementById(id).addEventListener('click', () => { cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1); if (monthKey(selectedDate) !== monthKey(cursor)) selectedDate = toYmd(cursor); renderAll(); }));
   document.getElementById('fab-main').addEventListener('click', () => { closeDayModal(); openModal('self'); });
@@ -1330,7 +1358,7 @@ function bindEvents() {
     const screenLink = event.target.closest('[data-screen-link]');
     if (screenLink) { if (activeScreen === 'st') flushSettingsAutosave(); activeScreen = screenLink.dataset.screenLink; if (activeScreen !== 'cal') closeDayModal(); renderAll(); return; }
     const otherSales = event.target.closest('[data-sales-toggle]');
-    if (otherSales) { state.settings.showSales = !state.settings.showSales; markSettingsSections('display'); saveState(); renderAll(); return; }
+    if (otherSales) { state.settings.showSales = !state.settings.showSales; markSettingsSections('display'); saveState(); renderAll(); scheduleDriveAutoSync({ message: '表示設定をクラウドへ保存します...' }); return; }
     const dayButton = event.target.closest('.cal-day');
     if (dayButton) { openDayModal(dayButton.dataset.date); return; }
     const addDate = event.target.closest('[data-add-date]');
@@ -1342,7 +1370,7 @@ function bindEvents() {
     const applyReceipt = event.target.closest('[data-apply-receipt]');
     if (applyReceipt) { applyReceiptToEntry(applyReceipt.dataset.applyReceipt); return; }
     const delReceipt = event.target.closest('[data-del-receipt]');
-    if (delReceipt) { state.receipts = (state.receipts || []).filter((receipt) => receipt.id !== delReceipt.dataset.delReceipt); saveState(); renderAll(); return; }
+    if (delReceipt) { state.receipts = (state.receipts || []).filter((receipt) => receipt.id !== delReceipt.dataset.delReceipt); saveState(); renderAll(); scheduleDriveAutoSync({ message: '領収書をクラウドへ保存します...' }); return; }
     const companyChip = event.target.closest('[data-company]'); if (companyChip) { selectedCompany = companyChip.dataset.company; renderInvoiceScreen(); return; }
     if (event.target.matches('#cancel-entry-btn')) { closeModal(); return; }
     if (event.target.matches('[data-export-demen]')) exportDemenCsv();
