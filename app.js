@@ -13,7 +13,7 @@ const DEFAULT_SETTINGS = {
   companyInvoiceModes: {}, showSales: true, showSubcontract: true, googleClientId: '', googleCalendarId: 'primary', googleStoreMode: 'local', googleAccountEmail: '', googleSyncEnabled: false,
   salesTotalParts: { labor: true, overtime: true, expenses: false }, settingUpdatedAt: {},
 };
-const DEFAULT_STATE = { entries: [], receipts: [], settings: DEFAULT_SETTINGS };
+const DEFAULT_STATE = { entries: [], receipts: [], deletedEntryIds: {}, settings: DEFAULT_SETTINGS };
 const SETTINGS_SECTIONS = {
   profile: ['name', 'postalCode', 'address', 'tel', 'companyName'],
   bank: ['bank', 'branch', 'accountNo', 'accountName'],
@@ -70,7 +70,8 @@ function normalizeState(source) {
   settings.settingUpdatedAt = settings.settingUpdatedAt && typeof settings.settingUpdatedAt === 'object' ? settings.settingUpdatedAt : {};
   const entries = Array.isArray(source.entries) ? source.entries.map(normalizeEntry) : [];
   const receipts = Array.isArray(source.receipts) ? source.receipts.map(normalizeReceipt) : [];
-  return { entries, receipts, settings };
+  const deletedEntryIds = source.deletedEntryIds && typeof source.deletedEntryIds === 'object' ? source.deletedEntryIds : {};
+  return { entries, receipts, deletedEntryIds, settings };
 }
 function normalizeExpenseItems(items) {
   const list = Array.isArray(items) ? items : [];
@@ -868,14 +869,23 @@ function collectEntryForm() {
 function upsertEntry(entry) {
   state.entries = state.entries.filter((item) => item.id !== entry.id);
   state.entries.push(entry);
+  if (state.deletedEntryIds) delete state.deletedEntryIds[entry.id];
   selectedDate = entry.date; cursor = startOfMonth(fromYmd(entry.date));
   saveState(); renderAll(); scheduleDriveAutoSync();
+}
+function tombstoneEntryIds(ids) {
+  state.deletedEntryIds = { ...(state.deletedEntryIds || {}) };
+  const now = new Date().toISOString();
+  ids.forEach((id) => { if (id) state.deletedEntryIds[id] = now; });
 }
 function upsertEntries(entries) {
   const ids = new Set(entries.map((entry) => entry.id));
   const oldIds = editingId ? editingGroupIds() : new Set();
+  tombstoneEntryIds([...oldIds].filter((id) => !ids.has(id)));
   state.entries = state.entries.filter((item) => !ids.has(item.id) && !oldIds.has(item.id));
   state.entries.push(...entries);
+  state.deletedEntryIds = { ...(state.deletedEntryIds || {}) };
+  ids.forEach((id) => delete state.deletedEntryIds[id]);
   selectedDate = entries[0].date;
   cursor = startOfMonth(fromYmd(entries[0].date));
   saveState(); renderAll(); scheduleDriveAutoSync();
@@ -989,6 +999,12 @@ async function readDriveSyncFile(fileId) {
   const response = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
   return response.json();
 }
+async function pushLocalDriveState() {
+  const file = await findDriveSyncFile();
+  const content = JSON.stringify(syncPayload(), null, 2);
+  if (!file) return createDriveSyncFile(content);
+  return updateDriveSyncFile(file.id, content);
+}
 function newerByDate(a, b, dateKeys) {
   const aTime = Math.max(...dateKeys.map((key) => Date.parse(a?.[key] || '')).filter(Number.isFinite), 0);
   const bTime = Math.max(...dateKeys.map((key) => Date.parse(b?.[key] || '')).filter(Number.isFinite), 0);
@@ -1000,12 +1016,26 @@ function mergeById(localItems = [], remoteItems = [], dateKeys = ['updatedAt', '
   remoteItems.forEach((item) => map.set(item.id, map.has(item.id) ? newerByDate(map.get(item.id), item, dateKeys) : item));
   return [...map.values()];
 }
+function mergeDeletedEntryIds(localDeleted = {}, remoteDeleted = {}) {
+  return { ...(remoteDeleted || {}), ...(localDeleted || {}) };
+}
+function mergeEntriesWithDeletes(localEntries = [], remoteEntries = [], localDeleted = {}, remoteDeleted = {}) {
+  const deleted = mergeDeletedEntryIds(localDeleted, remoteDeleted);
+  const merged = mergeById(localEntries, remoteEntries);
+  return merged.filter((entry) => {
+    const deletedAt = Date.parse(deleted[entry.id] || '') || 0;
+    const entryAt = Math.max(Date.parse(entry.updatedAt || '') || 0, Date.parse(entry.createdAt || '') || 0);
+    return !deletedAt || entryAt > deletedAt;
+  });
+}
 function mergeDriveState(remotePayload) {
   const remoteState = normalizeState(remotePayload.state || remotePayload);
+  const deletedEntryIds = mergeDeletedEntryIds(state.deletedEntryIds, remoteState.deletedEntryIds);
   return normalizeState({
     settings: mergeSettingsBySection(state.settings, remoteState.settings),
-    entries: mergeById(state.entries, remoteState.entries),
+    entries: mergeEntriesWithDeletes(state.entries, remoteState.entries, state.deletedEntryIds, remoteState.deletedEntryIds),
     receipts: mergeById(state.receipts || [], remoteState.receipts || [], ['updatedAt', 'importedAt']),
+    deletedEntryIds,
   });
 }
 async function loginGoogleDrive() {
@@ -1032,6 +1062,11 @@ async function syncGoogleDrive({ auto = false, reason = '' } = {}) {
     saveGoogleSettings({ feedback: false, render: false, touch: false });
     setSyncLog(auto && reason === 'save' ? '変更をGoogle Driveへ保存中です...' : (auto ? 'Google Driveから最新データを確認中です...' : 'Google Driveと同期中です...'));
     await getDriveToken(googleAccessToken ? '' : driveAuthPrompt);
+    if (auto && reason === 'save') {
+      await pushLocalDriveState();
+      setSyncLog(`変更を保存しました。予定 ${state.entries.length}件`);
+      return;
+    }
     const file = await findDriveSyncFile();
     if (!file) {
       await createDriveSyncFile(JSON.stringify(syncPayload(), null, 2));
@@ -1259,6 +1294,7 @@ function deleteEntry(id) {
   const target = state.entries.find((entry) => entry.id === id);
   if (!target) return;
   state.entries = state.entries.filter((entry) => entry.id !== id);
+  tombstoneEntryIds([id]);
   if (target.rangeGroupId) {
     const groupItems = state.entries.filter((entry) => entry.rangeGroupId === target.rangeGroupId);
     const nextExcluded = [...new Set([
