@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 650 180" role="img" aria-labelledby="title">
+  <title id="title">NINQ wordmark</title>
+  <defs>
+    <filter id="softShadow" x="-5%" y="-20%" width="110%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#00132f" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <g fill="#fff" stroke="#fff" stroke-linejoin="miter" filter="url(#softShadow)">
+    <path d="M14 148V32h43l75 72V32h43v116h-43L57 76v72z"/>
+    <path d="M206 148V32h43v116z"/>
+    <path d="M280 148V32h43l75 72V32h43v116h-43L323 76v72z"/>
+    <path d="M554 146c-46 0-80-32-80-67s34-67 80-67 80 32 80 67c0 18-8 35-23 47l31 22h-54l-12-9c-7 4-14 7-22 7zm0-32c25 0 43-15 43-35s-18-35-43-35-43 15-43 35 18 35 43 35z"/>
+    <path d="M574 113l66 48h-54l-48-35z"/>
+  </g>
+</svg>
