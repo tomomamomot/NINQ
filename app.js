@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
-const APP_VERSION = 'v2026.05.20-6';
+const APP_VERSION = 'v2026.05.21-1';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
@@ -680,7 +680,7 @@ function renderSyncScreen() {
   if (rangeStart && !rangeStart.value) rangeStart.value = toYmd(new Date(cursor.getFullYear(), cursor.getMonth(), 1));
   if (rangeEnd && !rangeEnd.value) rangeEnd.value = toYmd(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0));
   const rangeEntries = calendarRangeEntries();
-  const calendarCount = document.getElementById('calendar-export-count'); if (calendarCount) calendarCount.textContent = `${rangeEntries.length}件`;
+  const calendarCount = document.getElementById('calendar-export-count'); if (calendarCount) calendarCount.textContent = `${calendarExportGroups(rangeEntries).length}件`;
   const backupStatus = document.getElementById('backup-status'); if (backupStatus) backupStatus.textContent = `${state.entries.length}予定`;
   const clientInput = document.getElementById('google-client-id'); if (clientInput && !clientInput.value) clientInput.value = state.settings.googleClientId || '';
   const driveStatus = document.getElementById('drive-sync-status'); if (driveStatus) driveStatus.textContent = googleAccessToken ? 'ログイン済み' : (state.settings.googleClientId ? '設定済み' : '未設定');
@@ -1265,18 +1265,53 @@ function calendarDescription(entry) {
   if (entry.notes) lines.push(`メモ: ${entry.notes}`);
   return lines.join('\n');
 }
+function calendarExportKey(entry) {
+  const company = String(entry.company || '').trim();
+  const site = String(entry.site || '').trim();
+  if (company && site) return [entry.type || 'self', entry.shift || 'day', company, site, entry.workerName || ''].join('\u001f');
+  if (entry.rangeGroupId) return `range:${entry.rangeGroupId}`;
+  return `single:${entry.id}`;
+}
+function calendarExportGroups(entries) {
+  const byKey = new Map();
+  entries.forEach((entry) => {
+    const key = calendarExportKey(entry);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(entry);
+  });
+  const groups = [];
+  byKey.forEach((items) => {
+    const sorted = [...items].sort((a, b) => a.date.localeCompare(b.date) || String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+    let current = null;
+    sorted.forEach((entry) => {
+      if (!current || adjacentYmd(current.end, 1) !== entry.date) {
+        current = { start: entry.date, end: entry.date, entries: [entry] };
+        groups.push(current);
+        return;
+      }
+      current.end = entry.date;
+      current.entries.push(entry);
+    });
+  });
+  return groups.sort((a, b) => a.start.localeCompare(b.start) || companyEventTitle(a.entries[0]).localeCompare(companyEventTitle(b.entries[0]), 'ja'));
+}
+function calendarGroupDescription(group) {
+  const base = calendarDescription(group.entries[0]);
+  return group.entries.length > 1 ? `${base}\n期間: ${group.start}〜${group.end}` : base;
+}
 function googleCalendarUrl(entry) {
-  const start = icsDate(entry.date);
-  const endDate = fromYmd(entry.date); endDate.setDate(endDate.getDate() + 1);
-  const params = new URLSearchParams({ action: 'TEMPLATE', text: companyEventTitle(entry), dates: `${start}/${icsDate(toYmd(endDate))}`, details: calendarDescription(entry) });
+  const group = calendarExportGroups(state.entries).find((item) => item.entries.some((groupEntry) => groupEntry.id === entry.id)) || { start: entry.date, end: entry.date, entries: [entry] };
+  const endDate = fromYmd(group.end); endDate.setDate(endDate.getDate() + 1);
+  const params = new URLSearchParams({ action: 'TEMPLATE', text: companyEventTitle(group.entries[0]), dates: `${icsDate(group.start)}/${icsDate(toYmd(endDate))}`, details: calendarGroupDescription(group) });
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 function buildIcs(entries) {
   const stamp = icsStamp();
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//NINQ//Calendar Export//JA', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
-  entries.forEach((entry) => {
-    const endDate = fromYmd(entry.date); endDate.setDate(endDate.getDate() + 1);
-    lines.push('BEGIN:VEVENT', `UID:${icsEscape(entry.id)}@ninq`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${icsDate(entry.date)}`, `DTEND;VALUE=DATE:${icsDate(toYmd(endDate))}`, `SUMMARY:${icsEscape(companyEventTitle(entry))}`, `DESCRIPTION:${icsEscape(calendarDescription(entry))}`, 'END:VEVENT');
+  calendarExportGroups(entries).forEach((group) => {
+    const endDate = fromYmd(group.end); endDate.setDate(endDate.getDate() + 1);
+    const uid = group.entries.length > 1 ? group.entries.map((entry) => entry.id).join('-') : group.entries[0].id;
+    lines.push('BEGIN:VEVENT', `UID:${icsEscape(uid)}@ninq`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${icsDate(group.start)}`, `DTEND;VALUE=DATE:${icsDate(toYmd(endDate))}`, `SUMMARY:${icsEscape(companyEventTitle(group.entries[0]))}`, `DESCRIPTION:${icsEscape(calendarGroupDescription(group))}`, 'END:VEVENT');
   });
   lines.push('END:VCALENDAR', '');
   return lines.join('\r\n');
@@ -1300,8 +1335,9 @@ function exportRangeCalendarIcs() {
   if (end < start) { setSyncLog('終了日は開始日以降にしてください'); return; }
   const entries = calendarRangeEntries();
   if (!entries.length) { setSyncLog(`${start}〜${end}の予定がありません`); return; }
+  const groups = calendarExportGroups(entries);
   downloadText(`${start}_${end}_NINQ.ics`, buildIcs(entries), 'text/calendar;charset=utf-8;');
-  setSyncLog(`${start}〜${end}の予定${entries.length}件を出力しました`);
+  setSyncLog(`${start}〜${end}の予定${groups.length}件を出力しました`);
   renderSyncScreen();
 }
 function openSelectedDayGoogleCalendar() {
