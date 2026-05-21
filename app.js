@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
-const APP_VERSION = 'v2026.05.21-1';
+const APP_VERSION = 'v2026.05.21-2';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
@@ -1299,10 +1299,18 @@ function calendarGroupDescription(group) {
   const base = calendarDescription(group.entries[0]);
   return group.entries.length > 1 ? `${base}\n期間: ${group.start}〜${group.end}` : base;
 }
+function calendarExportTitle(group) {
+  const entry = group.entries[0];
+  const title = companyEventTitle(entry);
+  return entry.shift === 'night' ? `🌙 ${title}` : title;
+}
+function calendarExportColor(group) {
+  return group.entries[0]?.shift === 'night' ? '#5B4BC4' : '#FFD45A';
+}
 function googleCalendarUrl(entry) {
   const group = calendarExportGroups(state.entries).find((item) => item.entries.some((groupEntry) => groupEntry.id === entry.id)) || { start: entry.date, end: entry.date, entries: [entry] };
   const endDate = fromYmd(group.end); endDate.setDate(endDate.getDate() + 1);
-  const params = new URLSearchParams({ action: 'TEMPLATE', text: companyEventTitle(group.entries[0]), dates: `${icsDate(group.start)}/${icsDate(toYmd(endDate))}`, details: calendarGroupDescription(group) });
+  const params = new URLSearchParams({ action: 'TEMPLATE', text: calendarExportTitle(group), dates: `${icsDate(group.start)}/${icsDate(toYmd(endDate))}`, details: calendarGroupDescription(group) });
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 function buildIcs(entries) {
@@ -1311,7 +1319,7 @@ function buildIcs(entries) {
   calendarExportGroups(entries).forEach((group) => {
     const endDate = fromYmd(group.end); endDate.setDate(endDate.getDate() + 1);
     const uid = group.entries.length > 1 ? group.entries.map((entry) => entry.id).join('-') : group.entries[0].id;
-    lines.push('BEGIN:VEVENT', `UID:${icsEscape(uid)}@ninq`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${icsDate(group.start)}`, `DTEND;VALUE=DATE:${icsDate(toYmd(endDate))}`, `SUMMARY:${icsEscape(companyEventTitle(group.entries[0]))}`, `DESCRIPTION:${icsEscape(calendarGroupDescription(group))}`, 'END:VEVENT');
+    lines.push('BEGIN:VEVENT', `UID:${icsEscape(uid)}@ninq`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${icsDate(group.start)}`, `DTEND;VALUE=DATE:${icsDate(toYmd(endDate))}`, `SUMMARY:${icsEscape(calendarExportTitle(group))}`, `DESCRIPTION:${icsEscape(calendarGroupDescription(group))}`, `COLOR:${calendarExportColor(group)}`, 'END:VEVENT');
   });
   lines.push('END:VCALENDAR', '');
   return lines.join('\r\n');
