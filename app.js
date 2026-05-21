@@ -3,8 +3,8 @@ const STORE_KEY = 'ninq-v2';
 const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
-const APP_VERSION = 'v2026.05.21-3';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
+const APP_VERSION = 'v2026.05.21-4';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
@@ -1020,6 +1020,24 @@ async function driveFetch(url, options = {}, retry = true) {
   if (!response.ok) throw new Error(await response.text() || `Google Driveエラー ${response.status}`);
   return response;
 }
+async function calendarFetch(url, options = {}, retry = true) {
+  const token = googleAccessToken || await getDriveToken(driveAuthPrompt);
+  const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } });
+  if (response.status === 401 && retry) {
+    googleAccessToken = '';
+    await getDriveToken(driveAuthPrompt);
+    return calendarFetch(url, options, false);
+  }
+  return response;
+}
+async function googleErrorText(response, fallback) {
+  try {
+    const data = await response.json();
+    return data?.error?.message || fallback;
+  } catch (error) {
+    return await response.text() || fallback;
+  }
+}
 async function findDriveSyncFile() {
   const params = new URLSearchParams({
     spaces: 'appDataFolder',
@@ -1307,6 +1325,57 @@ function calendarExportTitle(group) {
 function calendarExportColor(group) {
   return group.entries[0]?.shift === 'night' ? '#5B4BC4' : '#FFD45A';
 }
+function calendarExportColorId(group) {
+  return group.entries[0]?.shift === 'night' ? '9' : '5';
+}
+function base32HexHash(text) {
+  let hash = 2166136261;
+  String(text).split('').forEach((char) => {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  });
+  const alphabet = '0123456789abcdefghijklmnopqrstuv';
+  let out = '';
+  do {
+    out = alphabet[hash & 31] + out;
+    hash >>>= 5;
+  } while (hash);
+  return out.padStart(7, '0');
+}
+function calendarEventId(group) {
+  const raw = [group.start, group.end, calendarExportKey(group.entries[0]), group.entries.map((entry) => entry.id).join('|')].join('|');
+  return `ninq${base32HexHash(raw)}${base32HexHash(raw.split('').reverse().join(''))}`;
+}
+function calendarEventBody(group) {
+  const endDate = fromYmd(group.end); endDate.setDate(endDate.getDate() + 1);
+  return {
+    summary: calendarExportTitle(group),
+    description: calendarGroupDescription(group),
+    start: { date: group.start },
+    end: { date: toYmd(endDate) },
+    colorId: calendarExportColorId(group),
+    extendedProperties: { private: { app: 'NINQ', ninqRange: `${group.start}_${group.end}` } },
+  };
+}
+async function upsertGoogleCalendarEvent(calendarId, group) {
+  const eventId = calendarEventId(group);
+  const encodedCalendarId = encodeURIComponent(calendarId || 'primary');
+  const insertBody = { ...calendarEventBody(group), id: eventId };
+  let response = await calendarFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodedCalendarId}/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+    body: JSON.stringify(insertBody),
+  });
+  if (response.status === 409) {
+    response = await calendarFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodedCalendarId}/events/${eventId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+      body: JSON.stringify(calendarEventBody(group)),
+    });
+  }
+  if (!response.ok) throw new Error(await googleErrorText(response, `Googleカレンダー登録エラー ${response.status}`));
+  return response.json();
+}
 function googleCalendarUrl(entry) {
   const group = calendarExportGroups(state.entries).find((item) => item.entries.some((groupEntry) => groupEntry.id === entry.id)) || { start: entry.date, end: entry.date, entries: [entry] };
   const endDate = fromYmd(group.end); endDate.setDate(endDate.getDate() + 1);
@@ -1337,16 +1406,28 @@ function calendarRangeEntries() {
   if (!start || !end || end < start) return [];
   return state.entries.filter((entry) => entry.date >= start && entry.date <= end).sort((a, b) => a.date.localeCompare(b.date));
 }
-function exportRangeCalendarIcs() {
+async function exportRangeCalendarIcs() {
   const { start, end } = calendarRangeValues();
   if (!start || !end) { setSyncLog('開始日と終了日を選んでください'); return; }
   if (end < start) { setSyncLog('終了日は開始日以降にしてください'); return; }
   const entries = calendarRangeEntries();
   if (!entries.length) { setSyncLog(`${start}〜${end}の予定がありません`); return; }
   const groups = calendarExportGroups(entries);
-  downloadText(`${start}_${end}_NINQ.ics`, buildIcs(entries), 'text/calendar;charset=utf-8;');
-  setSyncLog(`${start}〜${end}の予定${groups.length}件を出力しました`);
-  renderSyncScreen();
+  const previousPrompt = driveAuthPrompt;
+  try {
+    saveGoogleSettings({ feedback: false, render: false, touch: false });
+    driveAuthPrompt = 'consent';
+    await getDriveToken('consent');
+    const calendarId = state.settings.googleCalendarId || 'primary';
+    setSyncLog(`${groups.length}件をGoogleカレンダーへ登録中です...`);
+    for (const group of groups) await upsertGoogleCalendarEvent(calendarId, group);
+    setSyncLog(`${start}〜${end}の予定${groups.length}件をGoogleカレンダーへ登録しました`);
+    renderSyncScreen();
+  } catch (error) {
+    setSyncLog(error.message || 'Googleカレンダー登録に失敗しました');
+  } finally {
+    driveAuthPrompt = previousPrompt;
+  }
 }
 function openSelectedDayGoogleCalendar() {
   const entries = dayEntries(selectedDate);
