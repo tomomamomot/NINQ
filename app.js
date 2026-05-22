@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.21-6';
+const APP_VERSION = 'v2026.05.22-1';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
@@ -1357,9 +1357,47 @@ function calendarEventBody(group) {
     extendedProperties: { private: { app: 'NINQ', ninqRange: `${group.start}_${group.end}` } },
   };
 }
+function calendarGroupEndExclusive(group) {
+  const endDate = fromYmd(group.end);
+  endDate.setDate(endDate.getDate() + 1);
+  return toYmd(endDate);
+}
+function isSameGoogleCalendarEvent(event, group) {
+  return event?.summary === calendarExportTitle(group)
+    && event?.start?.date === group.start
+    && event?.end?.date === calendarGroupEndExclusive(group);
+}
+async function findExistingGoogleCalendarEvent(calendarId, group) {
+  const encodedCalendarId = encodeURIComponent(calendarId || 'primary');
+  const params = new URLSearchParams({
+    singleEvents: 'true',
+    maxResults: '20',
+    timeMin: `${group.start}T00:00:00+09:00`,
+    timeMax: `${calendarGroupEndExclusive(group)}T00:00:00+09:00`,
+    q: calendarExportTitle(group),
+    fields: 'items(id,summary,start,end,extendedProperties)',
+  });
+  const response = await calendarFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodedCalendarId}/events?${params.toString()}`);
+  if (!response.ok) throw new Error(await googleErrorText(response, `Googleカレンダー確認エラー ${response.status}`));
+  const data = await response.json();
+  return (data.items || []).find((event) => isSameGoogleCalendarEvent(event, group)) || null;
+}
+async function updateGoogleCalendarEvent(calendarId, eventId, group) {
+  const encodedCalendarId = encodeURIComponent(calendarId || 'primary');
+  const response = await calendarFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodedCalendarId}/events/${encodeURIComponent(eventId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+    body: JSON.stringify(calendarEventBody(group)),
+  });
+  if (!response.ok) throw new Error(await googleErrorText(response, `Googleカレンダー更新エラー ${response.status}`));
+  await response.json();
+  return 'updated';
+}
 async function upsertGoogleCalendarEvent(calendarId, group) {
   const eventId = calendarEventId(group);
   const encodedCalendarId = encodeURIComponent(calendarId || 'primary');
+  const existing = await findExistingGoogleCalendarEvent(calendarId, group);
+  if (existing) return updateGoogleCalendarEvent(calendarId, existing.id, group);
   const insertBody = { ...calendarEventBody(group), id: eventId };
   let response = await calendarFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodedCalendarId}/events`, {
     method: 'POST',
@@ -1367,14 +1405,11 @@ async function upsertGoogleCalendarEvent(calendarId, group) {
     body: JSON.stringify(insertBody),
   });
   if (response.status === 409) {
-    response = await calendarFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodedCalendarId}/events/${eventId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-      body: JSON.stringify(calendarEventBody(group)),
-    });
+    return updateGoogleCalendarEvent(calendarId, eventId, group);
   }
   if (!response.ok) throw new Error(await googleErrorText(response, `Googleカレンダー登録エラー ${response.status}`));
-  return response.json();
+  await response.json();
+  return 'created';
 }
 function googleCalendarUrl(entry) {
   const group = calendarExportGroups(state.entries).find((item) => item.entries.some((groupEntry) => groupEntry.id === entry.id)) || { start: entry.date, end: entry.date, entries: [entry] };
@@ -1420,8 +1455,13 @@ async function exportRangeCalendarIcs() {
     await getDriveToken('consent');
     const calendarId = state.settings.googleCalendarId || 'primary';
     setSyncLog(`${groups.length}件をGoogleカレンダーへ登録中です...`);
-    for (const group of groups) await upsertGoogleCalendarEvent(calendarId, group);
-    setSyncLog(`${start}〜${end}の予定${groups.length}件をGoogleカレンダーへ登録しました`);
+    const result = { created: 0, updated: 0 };
+    for (const group of groups) {
+      const status = await upsertGoogleCalendarEvent(calendarId, group);
+      if (status === 'created') result.created += 1;
+      else result.updated += 1;
+    }
+    setSyncLog(`${start}〜${end}をGoogleカレンダーへ反映しました。新規${result.created}件 / 更新${result.updated}件`);
     renderSyncScreen();
   } catch (error) {
     setSyncLog(error.message || 'Googleカレンダー登録に失敗しました');
