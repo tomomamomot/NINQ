@@ -177,7 +177,7 @@
         -webkit-line-clamp: unset !important;
         pointer-events: none;
       }
-      #sc-cal .cal-task.night { grid-row: 2; }
+      #sc-cal .cal-task.night { grid-row: var(--slot, 2); }
       #sc-cal .cal-day.holiday .dn,
       #sc-cal .cal-day.holiday.sun .dn { color: var(--red); }
       #sc-cal .cal-day.today.holiday .dn { color: #fff; }
