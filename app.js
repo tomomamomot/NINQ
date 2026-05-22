@@ -4,7 +4,8 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.22-2';
+const APP_VERSION = 'v2026.05.22-3';
+const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
@@ -104,7 +105,9 @@ function normalizeCompanyRates(items, companies = []) {
 function normalizeReceipt(receipt) {
   return {
     id: String(receipt.id || crypto.randomUUID()), fileName: receipt.fileName || '領収書', importedAt: receipt.importedAt || new Date().toISOString(),
-    category: receipt.category || guessReceiptCategory(receipt.fileName || ''), amount: num(receipt.amount || 0), date: receipt.date || '', vendor: receipt.vendor || '', status: receipt.status || '未確認'
+    category: receipt.category || guessReceiptCategory(`${receipt.fileName || ''} ${receipt.ocrText || ''}`),
+    amount: num(receipt.amount || 0), date: receipt.date || '', vendor: receipt.vendor || '',
+    ocrText: receipt.ocrText || '', status: receipt.status || '未確認', updatedAt: receipt.updatedAt || receipt.importedAt || new Date().toISOString()
   };
 }
 function normalizeEntry(entry) {
@@ -378,7 +381,7 @@ function guessReceiptCategory(name) {
   if (/hotel|宿|旅館/.test(text)) return '宿泊費';
   if (/gas|fuel|ガソリン|燃料/.test(text)) return 'ガソリン代';
   if (/train|bus|taxi|交通|電車|バス|タクシー/.test(text)) return '交通費';
-  if (/資材|材料|工具|tool/.test(text)) return '資材代';
+  if (/資材|材料|工具|tool|ホームセンター|建材|金物/.test(text)) return '資材代';
   return expenseItems()[0]?.label || 'その他';
 }
 function monthEntries() { const key = monthKey(cursor); return state.entries.filter((entry) => monthKey(entry.date) === key).sort((a, b) => a.date.localeCompare(b.date)); }
@@ -698,7 +701,7 @@ function renderReceiptScreen() {
   const body = document.getElementById('receipt-body'); if (!body) return;
   const receipts = state.receipts || [];
   if (!receipts.length) { body.innerHTML = '<div class="empty"><div>領収書はまだありません</div></div>'; return; }
-  body.innerHTML = '<div class="receipt-list">' + receipts.map((receipt) => `<div class="receipt-card"><div class="receipt-main"><div class="receipt-name">${escapeHtml(receipt.fileName || '領収書')}</div><div class="receipt-meta">${escapeHtml(receipt.status)} ・ ${escapeHtml((receipt.importedAt || '').slice(0, 10))}</div></div><div class="receipt-fields"><input class="receipt-date" type="date" data-receipt-date="${receipt.id}" value="${escapeHtml(receipt.date || '')}"><input class="receipt-amount" type="number" inputmode="numeric" min="0" step="1" data-receipt-amount="${receipt.id}" value="${num(receipt.amount) || ''}" placeholder="金額"></div><select class="receipt-select" data-receipt-category="${receipt.id}">${expenseItems().map((item) => `<option value="${escapeHtml(item.label)}" ${item.label === receipt.category ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select><button class="btn-secondary receipt-apply" type="button" data-apply-receipt="${receipt.id}">予定へ入力</button><button class="receipt-del" type="button" data-del-receipt="${receipt.id}">×</button></div>`).join('') + '</div>';
+  body.innerHTML = '<div class="receipt-list">' + receipts.map((receipt) => `<div class="receipt-card"><div class="receipt-main"><div class="receipt-name">${escapeHtml(receipt.vendor || receipt.fileName || '領収書')}</div><div class="receipt-meta">${escapeHtml(receipt.status)} ・ ${escapeHtml((receipt.importedAt || '').slice(0, 10))}</div></div><div class="receipt-fields"><input class="receipt-date" type="date" data-receipt-date="${receipt.id}" value="${escapeHtml(receipt.date || '')}"><input class="receipt-amount" type="number" inputmode="numeric" min="0" step="1" data-receipt-amount="${receipt.id}" value="${num(receipt.amount) || ''}" placeholder="金額"></div><select class="receipt-select" data-receipt-category="${receipt.id}">${expenseItems().map((item) => `<option value="${escapeHtml(item.label)}" ${item.label === receipt.category ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select>${receipt.ocrText ? `<details class="receipt-ocr"><summary>OCR文字</summary><pre>${escapeHtml(receipt.ocrText.slice(0, 900))}</pre></details>` : ''}<button class="btn-secondary receipt-apply" type="button" data-apply-receipt="${receipt.id}">予定へ入力</button><button class="receipt-del" type="button" data-del-receipt="${receipt.id}">×</button></div>`).join('') + '</div>';
 }
 function renderSettings() {
   const s = state.settings;
@@ -1509,10 +1512,121 @@ function guessReceiptAmount(name) {
   const match = String(name || '').match(/(?:¥|円|amount|amt)?\s*(\d{3,6})(?:円|yen)?/i);
   return match ? num(match[1]) : 0;
 }
+function normalizeOcrText(text) {
+  return String(text || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+}
+function guessReceiptVendorFromText(text, fallback = '') {
+  const skip = /領収|レシート|receipt|合計|小計|税|tel|電話|登録番号|インボイス|支払|現計|釣銭|お預|クレジット|visa|master|http|www/i;
+  const line = normalizeOcrText(text).split(/\r?\n/).map((item) => item.trim()).find((item) => item.length >= 2 && item.length <= 28 && !skip.test(item) && !/\d{2,}/.test(item));
+  return line || fallback.replace(/\.[^.]+$/, '').slice(0, 24);
+}
+function guessReceiptDateFromText(text) {
+  const source = normalizeOcrText(text);
+  const ymd = source.match(/(20\d{2}|令和\s*\d{1,2}|R\s*\d{1,2})\s*[年\/.\-]\s*(\d{1,2})\s*[月\/.\-]\s*(\d{1,2})/i);
+  if (ymd) {
+    const yearText = ymd[1].replace(/\s/g, '');
+    const year = /^20/.test(yearText) ? Number(yearText) : 2018 + Number(yearText.replace(/令和|R/i, ''));
+    return `${year}-${String(Number(ymd[2])).padStart(2, '0')}-${String(Number(ymd[3])).padStart(2, '0')}`;
+  }
+  const md = source.match(/(?:^|[^\d])(\d{1,2})\s*[月\/.\-]\s*(\d{1,2})\s*日?/);
+  if (md) return `${cursor.getFullYear()}-${String(Number(md[1])).padStart(2, '0')}-${String(Number(md[2])).padStart(2, '0')}`;
+  return '';
+}
+function numbersFromText(text) {
+  return [...String(text || '').matchAll(/(?:¥|￥)?\s*([0-9０-９][0-9０-９,，.．]{1,10})\s*(?:円)?/g)]
+    .map((match) => Number(match[1].replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xFEE0)).replace(/[,.，．]/g, '')))
+    .filter((value) => Number.isFinite(value) && value >= 10 && value <= 9999999);
+}
+function guessReceiptAmountFromText(text) {
+  const lines = normalizeOcrText(text).split(/\r?\n/);
+  const strong = lines.filter((line) => /合計|総合計|請求|領収|お買上|現計|税込|計\s*$/.test(line)).flatMap(numbersFromText);
+  if (strong.length) return Math.max(...strong);
+  const all = lines.flatMap(numbersFromText).filter((value) => value < 1000000);
+  return all.length ? Math.max(...all) : 0;
+}
+function receiptPatchFromOcr(text, fileName) {
+  const ocrText = normalizeOcrText(text);
+  return {
+    ocrText,
+    vendor: guessReceiptVendorFromText(ocrText, fileName),
+    date: guessReceiptDateFromText(ocrText) || guessReceiptDate(fileName),
+    amount: guessReceiptAmountFromText(ocrText) || guessReceiptAmount(fileName),
+    category: guessReceiptCategory(`${fileName} ${ocrText}`),
+    status: 'OCR候補',
+  };
+}
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-tesseract]');
+    if (existing) { existing.addEventListener('load', () => resolve(window.Tesseract), { once: true }); existing.addEventListener('error', reject, { once: true }); return; }
+    const script = document.createElement('script');
+    script.src = TESSERACT_URL;
+    script.async = true;
+    script.dataset.tesseract = 'true';
+    script.onload = () => resolve(window.Tesseract);
+    script.onerror = () => reject(new Error('OCRライブラリを読み込めませんでした'));
+    document.head.appendChild(script);
+  });
+}
+function preprocessReceiptImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const maxWidth = 1600;
+      const scale = Math.min(1, maxWidth / img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < image.data.length; i += 4) {
+        const gray = (image.data[i] * 0.299) + (image.data[i + 1] * 0.587) + (image.data[i + 2] * 0.114);
+        const value = gray > 185 ? 255 : Math.max(0, gray - 18);
+        image.data[i] = value; image.data[i + 1] = value; image.data[i + 2] = value;
+      }
+      ctx.putImageData(image, 0, 0);
+      URL.revokeObjectURL(url);
+      resolve(canvas);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
+    img.src = url;
+  });
+}
+async function runReceiptOcr(receiptId, file) {
+  if (!(file.type || '').startsWith('image/')) { updateReceiptField(receiptId, { status: 'OCR対象外（画像のみ）' }); renderReceiptScreen(); return; }
+  try {
+    updateReceiptField(receiptId, { status: 'OCR読み取り中' });
+    renderReceiptScreen();
+    const Tesseract = await loadTesseract();
+    const image = await preprocessReceiptImage(file);
+    const result = await Tesseract.recognize(image, 'jpn+eng', {
+      logger: (progress) => {
+        if (progress.status === 'recognizing text') {
+          const pct = Math.round((progress.progress || 0) * 100);
+          updateReceiptField(receiptId, { status: `OCR ${pct}%` });
+          renderReceiptScreen();
+        }
+      },
+    });
+    updateReceiptField(receiptId, receiptPatchFromOcr(result.data?.text || '', file.name));
+  } catch (error) {
+    updateReceiptField(receiptId, { status: error.message || 'OCR失敗' });
+  }
+  renderReceiptScreen();
+  scheduleDriveAutoSync({ message: '領収書OCR候補を保存しました' });
+}
+async function runReceiptOcrQueue(receipts, files) {
+  for (let index = 0; index < receipts.length; index += 1) {
+    await runReceiptOcr(receipts[index].id, files[index]);
+  }
+}
 function updateReceiptField(id, patch) {
   const item = (state.receipts || []).find((receipt) => receipt.id === id);
   if (!item) return;
-  Object.assign(item, patch, { status: patch.status || item.status });
+  Object.assign(item, patch, { status: patch.status || item.status, updatedAt: new Date().toISOString() });
   saveState();
 }
 function applyReceiptToEntry(id) {
@@ -1537,8 +1651,11 @@ function applyReceiptToEntry(id) {
 function handleReceiptFiles(files) {
   const list = Array.from(files || []);
   if (!list.length) return;
-  state.receipts = [...(state.receipts || []), ...list.map((file) => normalizeReceipt({ fileName: file.name, importedAt: new Date().toISOString(), category: guessReceiptCategory(file.name), date: guessReceiptDate(file.name), amount: guessReceiptAmount(file.name), status: '仕分け候補' }))];
+  const now = new Date().toISOString();
+  const receipts = list.map((file) => normalizeReceipt({ fileName: file.name, importedAt: now, category: guessReceiptCategory(file.name), date: guessReceiptDate(file.name), amount: guessReceiptAmount(file.name), status: (file.type || '').startsWith('image/') ? 'OCR待機中' : 'OCR対象外（画像のみ）' }));
+  state.receipts = [...(state.receipts || []), ...receipts];
   saveState(); renderReceiptScreen(); scheduleDriveAutoSync({ message: '領収書をクラウドへ保存します...' });
+  runReceiptOcrQueue(receipts, list);
 }
 function persistSettingsFromForm({ render = false, feedback = '', sections = [] } = {}) {
   const linesToObjects = (text, previous) => text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((label, index) => ({ id: previous[index]?.id || `exp${index + 1}`, label }));
