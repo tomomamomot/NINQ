@@ -111,7 +111,19 @@
     for (const slot of [3, 4]) {
       if (!usedSlots.has(slot)) return slot;
     }
-    return preferred;
+    return 0;
+  }
+
+  function reserveSlot(slotReservations, ymd, slot) {
+    if (!slot) return;
+    if (!slotReservations.has(ymd)) slotReservations.set(ymd, new Set());
+    slotReservations.get(ymd).add(slot);
+  }
+
+  function reserveBandSpan(slotReservations, ymd, span, slot) {
+    for (let offset = 1; offset < span; offset += 1) {
+      reserveSlot(slotReservations, adjacentYmd(ymd, offset), slot);
+    }
   }
 
   function sortEntriesForCalendar(items) {
@@ -222,6 +234,7 @@
     const firstCell = new Date(monthStart);
     firstCell.setDate(firstCell.getDate() - startCol);
     const rows = ['月', '火', '水', '木', '金', '土', '日'].map((label) => `<div class="cal-dow">${label}</div>`);
+    const slotReservations = new Map();
 
     for (let i = 0; i < 42; i += 1) {
       const date = new Date(firstCell);
@@ -238,19 +251,22 @@
       if (date.getDay() === 6) classes.push('sat');
       if (holiday) classes.push('holiday');
 
-      const usedSlots = new Set();
+      const usedSlots = new Set(slotReservations.get(ymd) || []);
       const visibleItems = sortEntriesForCalendar(items).filter((entry) => isBandStart(ymd, entry, col));
-      const lines = visibleItems.slice(0, 4).map((entry) => {
+      const lines = [];
+      visibleItems.forEach((entry) => {
         const slot = shiftSlot(entry, usedSlots);
+        if (!slot) return;
         usedSlots.add(slot);
         const span = bandSpan(ymd, entry, col);
+        reserveBandSpan(slotReservations, ymd, span, slot);
         const label = escapeHtml(companyEventTitle(entry));
-        return `<div class="${window.calendarTaskClass(entry)}" style="--slot:${slot};--span:${span}">${label}</div>`;
-      }).join('');
-      const hiddenCount = Math.max(0, visibleItems.length - 4, items.length - 4);
+        lines.push(`<div class="${window.calendarTaskClass(entry)}" style="--slot:${slot};--span:${span}">${label}</div>`);
+      });
+      const hiddenCount = Math.max(0, visibleItems.length - lines.length, items.length - 4);
       const more = hiddenCount ? `<div class="more-chip" aria-label="ほかに${hiddenCount}件">… +${hiddenCount}</div>` : '';
       const holidayHtml = holiday ? `<span class="holiday-name">${escapeHtml(holiday)}</span>` : '<span class="holiday-name"></span>';
-      rows.push(`<button class="${classes.join(' ')}" data-date="${ymd}"><span class="dn">${date.getDate()}</span>${holidayHtml}<div class="task-stack">${lines}</div>${more}</button>`);
+      rows.push(`<button class="${classes.join(' ')}" data-date="${ymd}"><span class="dn">${date.getDate()}</span>${holidayHtml}<div class="task-stack">${lines.join('')}</div>${more}</button>`);
     }
 
     grid.innerHTML = rows.join('');
