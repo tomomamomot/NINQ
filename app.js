@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.27-1';
+const APP_VERSION = 'v2026.05.27-2';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -224,6 +224,32 @@ function editingGroupIds() {
   return entryRangeGroup(entry).ids;
 }
 function expenseItems() { return normalizeExpenseItems(state.settings.expenseItems); }
+function coreExpenseItems() {
+  const aliases = [
+    { id: 'exp1', label: '交通費', match: /交通/ },
+    { id: 'exp2', label: '駐車場代', match: /駐車|parking/i },
+    { id: 'exp4', label: 'ガソリン代', match: /ガソリン|燃料|gas|fuel/i },
+    { id: 'exp5', label: '資材代', match: /資材|材料|工具|建材|金物|tool/i },
+  ];
+  const items = expenseItems();
+  return aliases.map((alias) => {
+    const found = items.find((item) => alias.match.test(item.label || ''));
+    return found || { id: alias.id, label: alias.label };
+  });
+}
+function modalExpenseItems() {
+  const map = new Map();
+  coreExpenseItems().forEach((item) => map.set(item.id, item));
+  expenseItems().forEach((item) => map.set(item.id, item));
+  return [...map.values()];
+}
+function renderEntryExpenseChips(entry) {
+  const chips = coreExpenseItems()
+    .map((item) => ({ label: item.label, value: num(entry.expenses?.[item.id]) }))
+    .filter((item) => item.value > 0);
+  if (!chips.length) return '';
+  return `<div class="day-mini-expenses">${chips.map((item) => `<span>${escapeHtml(item.label)} ${yen(item.value)}</span>`).join('')}</div>`;
+}
 function companyOptions() { return companyPresets().map((item) => item.name).sort((a, b) => a.localeCompare(b, 'ja')); }
 function companyPresets() { return normalizeCompanyRates(state.settings.companyRates, state.settings.companies); }
 function companyPresetByName(name) { return companyPresets().find((item) => item.name === name); }
@@ -505,7 +531,7 @@ function renderDayEntries() {
   }
   body.innerHTML = `<div class="day-mini-list">${entries.map((entry) => {
     const isSub = entry.type === 'sub';
-    return `<div class="day-mini-card ${shiftClass(entry.shift)} ${isSub ? 'sub' : ''}"><div class="day-mini-row"><div><div class="day-mini-site">${escapeHtml(entry.site || '現場名未入力')}</div><div class="day-mini-company">${escapeHtml(entry.company || '会社名未入力')} ・ ${isSub ? escapeHtml(entry.workerName || '外注職人') : '自分'} ・ ${shiftLabel(entry.shift)}</div></div><div class="pill ${isSub ? 'sub' : shiftClass(entry.shift)}">${isSub ? '外注' : shiftLabel(entry.shift)}</div></div><div class="day-mini-actions"><button class="day-mini-btn" type="button" data-edit-entry="${entry.id}">編集</button><button class="day-mini-btn del" type="button" data-del-entry="${entry.id}">削除</button></div></div>`;
+    return `<div class="day-mini-card ${shiftClass(entry.shift)} ${isSub ? 'sub' : ''}"><div class="day-mini-row"><div><div class="day-mini-site">${escapeHtml(entry.site || '現場名未入力')}</div><div class="day-mini-company">${escapeHtml(entry.company || '会社名未入力')} ・ ${isSub ? escapeHtml(entry.workerName || '外注職人') : '自分'} ・ ${shiftLabel(entry.shift)}</div></div><div class="pill ${isSub ? 'sub' : shiftClass(entry.shift)}">${isSub ? '外注' : shiftLabel(entry.shift)}</div></div>${renderEntryExpenseChips(entry)}<div class="day-mini-actions"><button class="day-mini-btn" type="button" data-edit-entry="${entry.id}">編集</button><button class="day-mini-btn del" type="button" data-del-entry="${entry.id}">削除</button></div></div>`;
   }).join('')}<button class="btn-primary" type="button" data-add-date="${selectedDate}">予定を追加</button></div>`;
   modal.classList.toggle('open', activeScreen === 'cal' && isDayModalOpen);
 }
@@ -837,7 +863,7 @@ function openModal(type, id = null) {
   const startValue = editRange?.start || entry.date;
   const endValue = editRange?.end || entry.date;
   const isSub = entry.type === 'sub' || type === 'sub';
-  const expenseFields = expenseItems().map((item) => `<div class="field"><label>${escapeHtml(item.label)}</label><input type="number" min="0" step="1" data-expense-id="${item.id}" value="${num(entry.expenses?.[item.id]) || ''}"></div>`).join('');
+  const expenseFields = modalExpenseItems().map((item) => `<div class="field"><label>${escapeHtml(item.label)}</label><input type="number" min="0" step="1" data-expense-id="${item.id}" value="${num(entry.expenses?.[item.id]) || ''}"></div>`).join('');
   const typeButtons = `<button class="type-btn ${entry.type === 'self' ? 'active' : ''}" data-entry-type="self" type="button">自分</button>${subcontractEnabled() || entry.type === 'sub' ? `<button class="type-btn ${entry.type === 'sub' ? 'active' : ''}" data-entry-type="sub" type="button">外注職人</button>` : ''}`;
   const companyChoices = companyOptions();
   const companyOptionsHtml = companyChoices.map((name) => `<option value="${escapeHtml(name)}" ${name === entry.company ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
