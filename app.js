@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.22-3';
+const APP_VERSION = 'v2026.05.27-1';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -889,6 +889,8 @@ function collectEntryForm() {
   if (!startDate) throw new Error('開始日を入力してください');
   if (fromYmd(endDate) < fromYmd(startDate)) throw new Error('終了日は開始日以降にしてください');
   const original = editingId ? state.entries.find((item) => item.id === editingId) : null;
+  const originalRange = original ? entryRangeGroup(original) : null;
+  const originalByDate = new Map((originalRange?.entries || []).map((entry) => [entry.date, entry]));
   const createdAt = original?.createdAt || new Date().toISOString();
   const base = {
     type, shift: document.getElementById('f-shift').value,
@@ -906,13 +908,13 @@ function collectEntryForm() {
   const rangeGroupId = isRange ? (original?.rangeGroupId || crypto.randomUUID()) : '';
   return dates.map((date) => ({
     ...base,
-    id: editingId && original?.date === date ? editingId : crypto.randomUUID(),
+    id: editingId && originalByDate.has(date) ? originalByDate.get(date).id : crypto.randomUUID(),
     date,
     rangeGroupId,
     rangeStart: isRange ? startDate : '',
     rangeEnd: isRange ? endDate : '',
     excludedDates: isRange ? excludedDates : [],
-    expenses: { ...base.expenses }
+    expenses: editingId && originalRange?.entries.length > 1 && date !== original.date && originalByDate.has(date) ? { ...(originalByDate.get(date).expenses || {}) } : { ...base.expenses }
   }));
 }
 function upsertEntry(entry) {
