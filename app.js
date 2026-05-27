@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.27-2';
+const APP_VERSION = 'v2026.05.27-3';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -245,9 +245,7 @@ function modalExpenseItems() {
 }
 function renderEntryExpenseChips(entry) {
   const chips = coreExpenseItems()
-    .map((item) => ({ label: item.label, value: num(entry.expenses?.[item.id]) }))
-    .filter((item) => item.value > 0);
-  if (!chips.length) return '';
+    .map((item) => ({ label: item.label, value: num(entry.expenses?.[item.id]) }));
   return `<div class="day-mini-expenses">${chips.map((item) => `<span>${escapeHtml(item.label)} ${yen(item.value)}</span>`).join('')}</div>`;
 }
 function companyOptions() { return companyPresets().map((item) => item.name).sort((a, b) => a.localeCompare(b, 'ja')); }
@@ -531,7 +529,7 @@ function renderDayEntries() {
   }
   body.innerHTML = `<div class="day-mini-list">${entries.map((entry) => {
     const isSub = entry.type === 'sub';
-    return `<div class="day-mini-card ${shiftClass(entry.shift)} ${isSub ? 'sub' : ''}"><div class="day-mini-row"><div><div class="day-mini-site">${escapeHtml(entry.site || '現場名未入力')}</div><div class="day-mini-company">${escapeHtml(entry.company || '会社名未入力')} ・ ${isSub ? escapeHtml(entry.workerName || '外注職人') : '自分'} ・ ${shiftLabel(entry.shift)}</div></div><div class="pill ${isSub ? 'sub' : shiftClass(entry.shift)}">${isSub ? '外注' : shiftLabel(entry.shift)}</div></div>${renderEntryExpenseChips(entry)}<div class="day-mini-actions"><button class="day-mini-btn" type="button" data-edit-entry="${entry.id}">編集</button><button class="day-mini-btn del" type="button" data-del-entry="${entry.id}">削除</button></div></div>`;
+    return `<div class="day-mini-card ${shiftClass(entry.shift)} ${isSub ? 'sub' : ''}"><div class="day-mini-row"><div class="day-mini-main"><div class="day-mini-site">${escapeHtml(entry.site || '現場名未入力')}</div><div class="day-mini-company">${escapeHtml(entry.company || '会社名未入力')} ・ ${isSub ? escapeHtml(entry.workerName || '外注職人') : '自分'} ・ ${shiftLabel(entry.shift)}</div></div><div class="day-mini-side"><div class="pill ${isSub ? 'sub' : shiftClass(entry.shift)}">${isSub ? '外注' : shiftLabel(entry.shift)}</div>${renderEntryExpenseChips(entry)}</div></div><div class="day-mini-actions"><button class="day-mini-btn" type="button" data-edit-entry="${entry.id}">編集</button><button class="day-mini-btn del" type="button" data-del-entry="${entry.id}">削除</button></div></div>`;
   }).join('')}<button class="btn-primary" type="button" data-add-date="${selectedDate}">予定を追加</button></div>`;
   modal.classList.toggle('open', activeScreen === 'cal' && isDayModalOpen);
 }

@@ -182,10 +182,11 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .day-panel-body{padding:12px 14px}
 .day-mini-list{display:grid;gap:10px}
 .day-mini-card{border:1px solid var(--line);border-left:8px solid var(--line);border-radius:14px;padding:14px;background:#fbfdff}.day-mini-card.day{border-left-color:var(--day);background:#fffaf0}.day-mini-card.night{border-left-color:var(--night);background:#fbf7ff}.day-mini-card.trip{border-left-color:var(--trip)}.day-mini-card.sub{border-color:#9bdfba;border-left-color:#2fb56f;background:#f2fbf6}
-.day-mini-row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.day-mini-row{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.day-mini-main{min-width:0;flex:1}.day-mini-side{min-width:128px;display:flex;flex-direction:column;align-items:stretch;gap:8px}
 .day-mini-title,.day-mini-site{font-size:18px;font-weight:900;line-height:1.35}
 .day-mini-sub,.day-mini-company{margin-top:4px;font-size:14px;color:var(--sub);line-height:1.5;font-weight:800}
-.day-mini-expenses{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.day-mini-expenses span{background:#eef6ff;border:1px solid #d9e8fb;color:#1f4f83;border-radius:999px;padding:5px 8px;font-size:12px;font-weight:900;line-height:1.2}
+.day-mini-expenses{display:grid;grid-template-columns:1fr;gap:5px}.day-mini-expenses span{display:flex;justify-content:space-between;gap:6px;background:#eef6ff;border:1px solid #d9e8fb;color:#1f4f83;border-radius:9px;padding:6px 8px;font-size:13px;font-weight:900;line-height:1.15;white-space:nowrap}
 .day-mini-actions{display:flex;gap:8px;margin-top:10px}
 .day-mini-btn{border:none;border-radius:10px;background:#eef3fa;color:var(--ink);padding:11px 14px;font-size:15px;font-weight:900}
 .day-mini-btn.del{background:#fff1f1;color:var(--red)}
