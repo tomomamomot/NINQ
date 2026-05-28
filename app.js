@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.27-3';
+const APP_VERSION = 'v2026.05.28-1';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS = {
   invoiceNo: '', invoiceEnabled: true, taxRate: 10, stampImage: '',
   defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0,
   companies: [], companyRates: [], expenseItems: DEFAULT_EXPENSE_ITEMS.map((label, index) => ({ id: `exp${index + 1}`, label })),
-  companyInvoiceModes: {}, showSales: true, showSubcontract: true, googleClientId: '', googleCalendarId: 'primary', googleStoreMode: 'local', googleAccountEmail: '', googleSyncEnabled: false,
+  companyInvoiceModes: {}, showSales: true, showSubcontract: true, uiSize: 'normal', fontChoice: 'system', googleClientId: '', googleCalendarId: 'primary', googleStoreMode: 'local', googleAccountEmail: '', googleSyncEnabled: false,
   salesTotalParts: { labor: true, overtime: true, expenses: false }, settingUpdatedAt: {},
 };
 const DEFAULT_STATE = { entries: [], receipts: [], deletedEntryIds: {}, settings: DEFAULT_SETTINGS };
@@ -22,7 +22,7 @@ const SETTINGS_SECTIONS = {
   invoice: ['invoiceNo', 'invoiceEnabled', 'taxRate', 'stampImage', 'companyInvoiceModes'],
   companies: ['companies', 'companyRates'],
   expenses: ['expenseItems'],
-  display: ['showSales', 'showSubcontract', 'salesTotalParts'],
+  display: ['showSales', 'showSubcontract', 'salesTotalParts', 'uiSize', 'fontChoice'],
   google: ['googleClientId', 'googleCalendarId', 'googleStoreMode', 'googleAccountEmail', 'googleSyncEnabled'],
 };
 
@@ -69,6 +69,8 @@ function normalizeState(source) {
   settings.expenseItems = normalizeExpenseItems(settings.expenseItems);
   settings.companyInvoiceModes = settings.companyInvoiceModes && typeof settings.companyInvoiceModes === 'object' ? settings.companyInvoiceModes : {};
   settings.salesTotalParts = { ...DEFAULT_SETTINGS.salesTotalParts, ...(settings.salesTotalParts || {}) };
+  if (!['normal', 'large', 'xlarge'].includes(settings.uiSize)) settings.uiSize = DEFAULT_SETTINGS.uiSize;
+  if (!['system', 'meiryo', 'gothic', 'rounded'].includes(settings.fontChoice)) settings.fontChoice = DEFAULT_SETTINGS.fontChoice;
   settings.settingUpdatedAt = settings.settingUpdatedAt && typeof settings.settingUpdatedAt === 'object' ? settings.settingUpdatedAt : {};
   const entries = Array.isArray(source.entries) ? source.entries.map(normalizeEntry) : [];
   const receipts = Array.isArray(source.receipts) ? source.receipts.map(normalizeReceipt) : [];
@@ -247,6 +249,10 @@ function renderEntryExpenseChips(entry) {
   const chips = coreExpenseItems()
     .map((item) => ({ label: item.label, value: num(entry.expenses?.[item.id]) }));
   return `<div class="day-mini-expenses">${chips.map((item) => `<span>${escapeHtml(item.label)} ${yen(item.value)}</span>`).join('')}</div>`;
+}
+function applyDisplayPreferences() {
+  document.body.dataset.uiSize = state.settings.uiSize || DEFAULT_SETTINGS.uiSize;
+  document.body.dataset.font = state.settings.fontChoice || DEFAULT_SETTINGS.fontChoice;
 }
 function companyOptions() { return companyPresets().map((item) => item.name).sort((a, b) => a.localeCompare(b, 'ja')); }
 function companyPresets() { return normalizeCompanyRates(state.settings.companyRates, state.settings.companies); }
@@ -445,7 +451,7 @@ function calendarTaskClass(entry, ymd, dayOfWeek) {
   return classes.filter(Boolean).join(' ');
 }
 
-function renderAll() { renderNav(); renderHeaders(); renderCalendar(); renderDayEntries(); renderSubScreen(); renderInvoiceScreen(); renderSettings(); renderSyncScreen(); renderReceiptScreen(); }
+function renderAll() { applyDisplayPreferences(); renderNav(); renderHeaders(); renderCalendar(); renderDayEntries(); renderSubScreen(); renderInvoiceScreen(); renderSettings(); renderSyncScreen(); renderReceiptScreen(); }
 function renderNav() {
   if (activeScreen === 'sub' && !subcontractEnabled()) activeScreen = 'cal';
   if (activeScreen !== 'cal') isDayModalOpen = false;
@@ -742,6 +748,8 @@ function renderSettings() {
   document.getElementById('tgl-sales-labor')?.classList.toggle('on', !!salesParts.labor);
   document.getElementById('tgl-sales-overtime')?.classList.toggle('on', !!salesParts.overtime);
   document.getElementById('tgl-sales-expenses')?.classList.toggle('on', !!salesParts.expenses);
+  const uiSize = document.getElementById('st-ui-size'); if (uiSize) uiSize.value = s.uiSize || DEFAULT_SETTINGS.uiSize;
+  const fontChoice = document.getElementById('st-font-choice'); if (fontChoice) fontChoice.value = s.fontChoice || DEFAULT_SETTINGS.fontChoice;
   document.getElementById('inv-no-row').classList.toggle('hidden', !s.invoiceEnabled);
   const stampPreview = document.getElementById('stamp-preview');
   if (stampPreview) {
@@ -1691,9 +1699,10 @@ function persistSettingsFromForm({ render = false, feedback = '', sections = [] 
     overtime: document.getElementById('tgl-sales-overtime')?.classList.contains('on') !== false,
     expenses: document.getElementById('tgl-sales-expenses')?.classList.contains('on') === true,
   };
-  state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: linesToObjects(document.getElementById('st-expenses').value, expenseItems()) };
+  state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, uiSize: document.getElementById('st-ui-size')?.value || DEFAULT_SETTINGS.uiSize, fontChoice: document.getElementById('st-font-choice')?.value || DEFAULT_SETTINGS.fontChoice, salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: linesToObjects(document.getElementById('st-expenses').value, expenseItems()) };
   markSettingsSections(sections.length ? sections : Object.keys(SETTINGS_SECTIONS).filter((section) => section !== 'google'));
   state.entries = state.entries.map((entry) => { const nextExpenses = {}; expenseItems().forEach((item) => { nextExpenses[item.id] = num(entry.expenses?.[item.id]); }); return { ...entry, expenses: nextExpenses }; });
+  applyDisplayPreferences();
   saveState();
   if (render) renderAll();
   if (feedback) showSaveFeedback(feedback);
@@ -1890,6 +1899,7 @@ function bindEvents() {
     if (event.target.id === 'f-date' || event.target.id === 'f-end-date') { renderRangeExclusions(); return; }
     if (event.target.id === 'google-export-start' || event.target.id === 'google-export-end') { renderSyncScreen(); return; }
     if (event.target.matches('#st-tax')) { scheduleSettingsAutosave({ immediate: true, section: 'invoice' }); return; }
+    if (event.target.matches('#st-ui-size,#st-font-choice')) { scheduleSettingsAutosave({ immediate: true, section: 'display' }); return; }
     if (event.target.matches('[data-range-exclude]')) { event.target.closest('.range-exclude-chip')?.classList.toggle('checked', event.target.checked); return; }
     if (event.target.id === 'f-company-select') { const input = document.getElementById('f-company'); if (input && event.target.value) { input.value = event.target.value; applyCompanyRate(event.target.value); updateSubcontractDiff(); } return; }
     if (event.target.matches('[data-receipt-category]')) { updateReceiptField(event.target.dataset.receiptCategory, { category: event.target.value, status: '確認済み' }); renderAll(); return; }

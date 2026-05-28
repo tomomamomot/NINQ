@@ -3,9 +3,15 @@
 :root{
   --ink:#1f2937;--sub:#5b6473;--line:#d7e0ea;--bg:#eef3f8;--card:#fff;
   --accent:#1a4fa0;--accent-soft:#e7f0ff;--day:#f2c94c;--day-ink:#4c3600;--night:#6f42c1;--night-soft:#f1e8ff;--trip:#1d8b5c;--subc:#d18b1e;--red:#d64545;
-  --safe-top:env(safe-area-inset-top,0px);--safe-bot:env(safe-area-inset-bottom,0px);--shadow:0 10px 28px rgba(15,23,42,.08)
+  --safe-top:env(safe-area-inset-top,0px);--safe-bot:env(safe-area-inset-bottom,0px);--shadow:0 10px 28px rgba(15,23,42,.08);
+  --app-font:-apple-system,BlinkMacSystemFont,'Segoe UI','Hiragino Sans','Yu Gothic UI',sans-serif;--body-size:17px;--cal-day-min:112px;--cal-date-size:18px;--cal-task-size:12px;--cal-task-line:1.25;--modal-title-size:20px;--modal-site-size:18px;--modal-meta-size:14px;--expense-chip-size:13px;--field-label-size:16px;--control-size:17px
 }
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Hiragino Sans','Yu Gothic UI',sans-serif;background:var(--bg);color:var(--ink);font-size:17px;max-width:430px;margin:0 auto;overflow-x:hidden}
+body[data-ui-size="large"]{--body-size:18px;--cal-day-min:124px;--cal-date-size:20px;--cal-task-size:13.5px;--cal-task-line:1.3;--modal-title-size:22px;--modal-site-size:20px;--modal-meta-size:15.5px;--expense-chip-size:14px;--field-label-size:17px;--control-size:18px}
+body[data-ui-size="xlarge"]{--body-size:19px;--cal-day-min:138px;--cal-date-size:22px;--cal-task-size:15px;--cal-task-line:1.32;--modal-title-size:24px;--modal-site-size:22px;--modal-meta-size:17px;--expense-chip-size:15px;--field-label-size:18px;--control-size:19px}
+body[data-font="meiryo"]{--app-font:Meiryo,'Hiragino Sans','Noto Sans JP',sans-serif}
+body[data-font="gothic"]{--app-font:'BIZ UDPGothic','Yu Gothic UI',Meiryo,'Noto Sans JP',sans-serif}
+body[data-font="rounded"]{--app-font:'Hiragino Maru Gothic ProN','Yu Gothic UI',Meiryo,'Noto Sans JP',sans-serif}
+body{font-family:var(--app-font);background:var(--bg);color:var(--ink);font-size:var(--body-size);max-width:430px;margin:0 auto;overflow-x:hidden}
 button,input,select,textarea{font:inherit}
 button{cursor:pointer}
 .screen{display:none;min-height:100dvh;padding-bottom:calc(82px + var(--safe-bot))}
@@ -21,7 +27,7 @@ button{cursor:pointer}
 .month-label{font-size:21px;font-weight:800}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;padding:10px 8px;background:var(--card);border-bottom:1px solid var(--line)}
 .cal-dow{text-align:center;font-size:15px;color:var(--sub);font-weight:650;padding:5px 0}
-.cal-day{border:none;background:#f9fbfe;border-radius:14px;padding:5px 4px;min-height:112px;display:flex;flex-direction:column;align-items:stretch;gap:4px;text-align:left}
+.cal-day{border:none;background:#f9fbfe;border-radius:14px;padding:5px 4px;min-height:var(--cal-day-min);display:flex;flex-direction:column;align-items:stretch;gap:4px;text-align:left}
 .cal-day:active{transform:scale(.985)}
 .cal-day.other{opacity:.3}
 .cal-day.sel{background:#e7f0ff;box-shadow:inset 0 0 0 2px #bfd6ff}
@@ -29,9 +35,9 @@ button{cursor:pointer}
 .cal-day.sun .dn{color:var(--red)}
 .cal-day.sat .dn{color:var(--accent)}
 .cal-day.today.sun .dn,.cal-day.today.sat .dn{color:#fff}
-.dn{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:650;margin:0 auto 2px}
+.dn{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:var(--cal-date-size);font-weight:650;margin:0 auto 2px}
 .task-stack{display:flex;flex-direction:column;gap:4px;min-height:56px}
-.cal-task{border-radius:9px;padding:5px 5px;font-size:12px;line-height:1.25;font-weight:650;color:#fff;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
+.cal-task{border-radius:9px;padding:5px 5px;font-size:var(--cal-task-size);line-height:var(--cal-task-line);font-weight:650;color:#fff;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
 .cal-task.cont-left{border-top-left-radius:0;border-bottom-left-radius:0;margin-left:-4px;padding-left:6px}
 .cal-task.cont-right{border-top-right-radius:0;border-bottom-right-radius:0;margin-right:-4px;padding-right:6px}
 .cal-task.day{background:var(--day);color:var(--day-ink)}
@@ -70,10 +76,10 @@ button{cursor:pointer}
 .modal-bg.open{display:flex}
 .modal{width:100%;max-width:430px;max-height:92dvh;background:var(--card);border-radius:24px 24px 0 0;overflow:auto;padding-bottom:calc(24px + var(--safe-bot))}
 .modal-handle{width:40px;height:5px;background:#d5dce7;border-radius:999px;margin:10px auto 0}
-.modal-title{padding:14px 20px 12px;border-bottom:1px solid var(--line);font-size:19px;font-weight:800}
+.modal-title{padding:14px 20px 12px;border-bottom:1px solid var(--line);font-size:calc(var(--modal-title-size) - 1px);font-weight:800}
 .modal-body{padding:16px 20px}
 .field{margin-bottom:15px}
-.field label{display:block;margin-bottom:6px;font-size:16px;color:var(--sub);font-weight:800}
+.field label{display:block;margin-bottom:6px;font-size:var(--field-label-size);color:var(--sub);font-weight:800}
 .field input,.field select,.field textarea,.st-input,.st-select{width:100%;border:1px solid var(--line);border-radius:13px;padding:14px 15px;background:#fff;color:var(--ink)}
 .date-picker-input{cursor:pointer}
 input[type="number"]::-webkit-outer-spin-button,
@@ -184,9 +190,9 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .day-mini-card{border:1px solid var(--line);border-left:8px solid var(--line);border-radius:14px;padding:14px;background:#fbfdff}.day-mini-card.day{border-left-color:var(--day);background:#fffaf0}.day-mini-card.night{border-left-color:var(--night);background:#fbf7ff}.day-mini-card.trip{border-left-color:var(--trip)}.day-mini-card.sub{border-color:#9bdfba;border-left-color:#2fb56f;background:#f2fbf6}
 .day-mini-row{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
 .day-mini-main{min-width:0;flex:1}.day-mini-side{min-width:128px;display:flex;flex-direction:column;align-items:stretch;gap:8px}
-.day-mini-title,.day-mini-site{font-size:18px;font-weight:900;line-height:1.35}
-.day-mini-sub,.day-mini-company{margin-top:4px;font-size:14px;color:var(--sub);line-height:1.5;font-weight:800}
-.day-mini-expenses{display:grid;grid-template-columns:1fr;gap:5px}.day-mini-expenses span{display:flex;justify-content:space-between;gap:6px;background:#eef6ff;border:1px solid #d9e8fb;color:#1f4f83;border-radius:9px;padding:6px 8px;font-size:13px;font-weight:900;line-height:1.15;white-space:nowrap}
+.day-mini-title,.day-mini-site{font-size:var(--modal-site-size);font-weight:900;line-height:1.35}
+.day-mini-sub,.day-mini-company{margin-top:4px;font-size:var(--modal-meta-size);color:var(--sub);line-height:1.5;font-weight:800}
+.day-mini-expenses{display:grid;grid-template-columns:1fr;gap:5px}.day-mini-expenses span{display:flex;justify-content:space-between;gap:6px;background:#eef6ff;border:1px solid #d9e8fb;color:#1f4f83;border-radius:9px;padding:6px 8px;font-size:var(--expense-chip-size);font-weight:900;line-height:1.15;white-space:nowrap}
 .day-mini-actions{display:flex;gap:8px;margin-top:10px}
 .day-mini-btn{border:none;border-radius:10px;background:#eef3fa;color:var(--ink);padding:11px 14px;font-size:15px;font-weight:900}
 .day-mini-btn.del{background:#fff1f1;color:var(--red)}
@@ -198,7 +204,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .day-modal-bg.open{opacity:1;pointer-events:auto}
 .day-modal{width:min(100%,380px);max-height:min(76dvh,560px);overflow:auto;background:#fff;border:1px solid var(--line);border-radius:22px;box-shadow:0 20px 40px rgba(15,23,42,.18)}
 .day-modal-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}
-.day-modal-title{font-size:20px;font-weight:900}
+.day-modal-title{font-size:var(--modal-title-size);font-weight:900}
 .day-modal-close{border:none;background:#eef3fa;color:var(--ink);width:38px;height:38px;border-radius:12px;font-size:24px;line-height:1}
 .day-modal-body{padding:14px}
 .day-mini-empty .btn-primary,.day-modal-body>.btn-primary,.day-mini-list>.btn-primary{margin-top:12px}
