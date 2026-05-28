@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.28-1';
+const APP_VERSION = 'v2026.05.28-2';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -251,8 +251,17 @@ function renderEntryExpenseChips(entry) {
   return `<div class="day-mini-expenses">${chips.map((item) => `<span>${escapeHtml(item.label)} ${yen(item.value)}</span>`).join('')}</div>`;
 }
 function applyDisplayPreferences() {
+  cleanupLegacyDisplayPreferences();
   document.body.dataset.uiSize = state.settings.uiSize || DEFAULT_SETTINGS.uiSize;
   document.body.dataset.font = state.settings.fontChoice || DEFAULT_SETTINGS.fontChoice;
+}
+function cleanupLegacyDisplayPreferences() {
+  document.getElementById('ninq-ui-preferences-style')?.remove();
+  document.getElementById('ninq-ui-preferences-section')?.remove();
+  try {
+    localStorage.removeItem('ninq-ui-prefs');
+    localStorage.removeItem(['g', 'enba-box-ui-prefs'].join(''));
+  } catch (error) {}
 }
 function companyOptions() { return companyPresets().map((item) => item.name).sort((a, b) => a.localeCompare(b, 'ja')); }
 function companyPresets() { return normalizeCompanyRates(state.settings.companyRates, state.settings.companies); }
@@ -1928,5 +1937,11 @@ function bindEvents() {
 }
 
 function registerPwa() { if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('sw failed', error)); }
-function init() { bindEvents(); renderAll(); registerPwa(); }
+function init() {
+  bindEvents();
+  renderAll();
+  window.setTimeout(() => { cleanupLegacyDisplayPreferences(); applyDisplayPreferences(); }, 0);
+  window.setTimeout(() => { cleanupLegacyDisplayPreferences(); applyDisplayPreferences(); }, 600);
+  registerPwa();
+}
 document.addEventListener('DOMContentLoaded', init);
