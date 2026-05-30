@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.31-5';
+const APP_VERSION = 'v2026.05.31-6';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -832,10 +832,19 @@ function invoiceTotals(entries) {
 function buildInvoiceSheet(entries, totals, hidden) {
   const s = state.settings;
   const invoiceCompany = companyOfficialName(selectedCompany);
-  const laborRate = entries.find((entry) => calcEntry(entry).unitRate)?.unitRate || 0;
   const otRate = entries.find((entry) => calcEntry(entry).otRate)?.otRate || 0;
   const stamp = s.stampImage ? `<img class="invoice-stamp" src="${s.stampImage}" alt="印鑑">` : '';
   const senderAddress = [s.postalCode ? `〒 ${escapeHtml(s.postalCode)}` : '', s.address ? escapeHtml(s.address) : ''].filter(Boolean).join(' ');
+  const laborGroups = [
+    { label: '別紙出面表参照', entries: entries.filter((entry) => entry.shift !== 'night') },
+    { label: '夜間', night: true, entries: entries.filter((entry) => entry.shift === 'night') },
+  ].filter((group) => group.entries.length);
+  const laborRows = (laborGroups.length ? laborGroups : [{ label: '別紙出面表参照', entries: [] }]).map((group, index) => {
+    const rates = [...new Set(group.entries.map((entry) => calcEntry(entry).unitRate).filter(Boolean))];
+    const qty = sumBy(group.entries, (entry) => calcEntry(entry).qty);
+    const labor = sumBy(group.entries, (entry) => calcEntry(entry).labor);
+    return `<tr class="${group.night ? 'invoice-night-row' : ''}"><td>${index === 0 ? `${cursor.getMonth() + 1}月` : ''}</td><td colspan="2" class="left">${group.label}</td><td>${qty ? qtyLabel(qty) : ''}</td><td>人工</td><td class="right">${rates.length === 1 ? yenPlain(rates[0], hidden) : ''}</td><td class="right">${labor ? yenPlain(labor, hidden) : ''}</td><td></td></tr>`;
+  }).join('');
   const expenseRows = totals.expenses.map((item) => `<tr><td></td><td colspan="2" class="left">${escapeHtml(item.label)}</td><td></td><td></td><td></td><td class="right">${item.total ? yenPlain(item.total, hidden) : ''}</td><td></td></tr>`).join('');
   const blankRows = Array.from({ length: 6 }, () => '<tr class="invoice-blank-row"><td></td><td colspan="2"></td><td></td><td></td><td></td><td></td><td></td></tr>').join('');
   return `
@@ -857,7 +866,7 @@ function buildInvoiceSheet(entries, totals, hidden) {
         <table class="invoice-table">
           <thead><tr><th>項目</th><th colspan="2">名称・形状・寸法</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th><th>備考</th></tr></thead>
           <tbody>
-            <tr><td>${cursor.getMonth() + 1}月</td><td colspan="2" class="left">別紙出面表参照</td><td>${qtyLabel(totals.qty)}</td><td>人工</td><td class="right">${laborRate ? yenPlain(laborRate, hidden) : ''}</td><td class="right">${yenPlain(totals.labor, hidden)}</td><td></td></tr>
+            ${laborRows}
             <tr><td></td><td colspan="2" class="left">残業</td><td>${totals.otHours || ''}</td><td>h</td><td class="right">${otRate ? yenPlain(otRate, hidden) : ''}</td><td class="right">${totals.overtime ? yenPlain(totals.overtime, hidden) : ''}</td><td></td></tr>
             <tr><td></td><td colspan="2" class="right">小計</td><td></td><td></td><td></td><td class="right">${yenPlain(totals.subtotal, hidden)}</td><td></td></tr>
             <tr><td></td><td colspan="2" class="right">消費税${num(s.taxRate)}%</td><td></td><td></td><td></td><td class="right">${yenPlain(totals.tax, hidden)}</td><td></td></tr>

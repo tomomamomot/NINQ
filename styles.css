@@ -2,7 +2,7 @@
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root{
   --ink:#1f2937;--sub:#5b6473;--line:#d7e0ea;--bg:#eef3f8;--card:#fff;
-  --accent:#1a4fa0;--accent-soft:#e7f0ff;--day:#f2c94c;--day-ink:#4c3600;--night:#6f42c1;--night-soft:#f1e8ff;--trip:#1d8b5c;--subc:#d18b1e;--red:#d64545;
+  --accent:#1a4fa0;--accent-soft:#e7f0ff;--day:#f2c94c;--day-ink:#4c3600;--night:#8b78d8;--night-soft:#f3efff;--trip:#1d8b5c;--subc:#d18b1e;--red:#d64545;
   --safe-top:env(safe-area-inset-top,0px);--safe-bot:env(safe-area-inset-bottom,0px);--shadow:0 10px 28px rgba(15,23,42,.08);
   --app-font:-apple-system,BlinkMacSystemFont,'Segoe UI','Hiragino Sans','Yu Gothic UI',sans-serif;--body-size:17px;--cal-day-min:112px;--cal-date-size:18px;--cal-task-size:12px;--cal-task-line:1.25;--modal-title-size:20px;--modal-site-size:18px;--modal-meta-size:14px;--expense-chip-size:13px;--field-label-size:16px;--control-size:17px
 }
@@ -152,6 +152,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .invoice-table th,.invoice-table td{border:1px solid #111;padding:5px 6px;height:25px;text-align:center;vertical-align:middle;background:#fff;color:#111;font-weight:400}
 .invoice-table th{font-weight:700}
 .invoice-table .left{text-align:left}.invoice-table .right{text-align:right}.invoice-table .center{text-align:center}
+.invoice-table tr.invoice-night-row td:nth-child(2){background:var(--night)!important;color:#fff!important;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .invoice-total-row td{height:32px;font-weight:800}
 .invoice-bank{display:grid;grid-template-columns:90px 1fr;gap:5px 14px;width:460px;margin-top:18px;font-size:12px}
 .invoice-bank strong{grid-row:1/5}
