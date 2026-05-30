@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.31-4';
+const APP_VERSION = 'v2026.05.31-5';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -914,7 +914,7 @@ function buildDemenSheet(entries, totals, hidden) {
     <div class="tbl-wrap demen-sheet-wrap" id="print-demen-wrap">
       <table class="demen demen-sheet">
         <thead>
-          <tr class="demen-title-row"><th colspan="4" class="left demen-company-name">${escapeHtml(companyOfficialName(selectedCompany) || '')}</th><th class="demen-title-main">${cursor.getMonth() + 1}</th><th colspan="3" class="left demen-title-main">月 出面表</th><th colspan="5"></th><th class="right demen-title-name">氏名：</th><th class="demen-title-name">${escapeHtml(state.settings.name || '')}</th></tr>
+          <tr class="demen-title-row"><th colspan="4" class="demen-title-spacer"></th><th class="demen-title-main">${cursor.getMonth() + 1}</th><th colspan="3" class="left demen-title-main">月 出面表</th><th colspan="5"></th><th class="right demen-title-name">氏名：</th><th class="demen-title-name">${escapeHtml(state.settings.name || '')}</th></tr>
           <tr><th>日</th><th>現場名</th><th>人工</th><th>人工単価</th><th>人工合計</th><th>残業h</th><th>残業単価</th><th>残業合計</th>${expenseHeaders}</tr>
         </thead>
         <tbody>${bodyRows}</tbody>
