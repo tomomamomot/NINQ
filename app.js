@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.30-2';
+const APP_VERSION = 'v2026.05.30-3';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -44,6 +44,8 @@ let driveAuthPrompt = 'consent';
 let driveSyncTimer = null;
 let driveSyncInFlight = false;
 let driveSyncQueued = false;
+let isSheetPageOpen = false;
+let sheetSwipeStart = null;
 
 function loadState() {
   try {
@@ -463,7 +465,8 @@ function calendarTaskClass(entry, ymd, dayOfWeek) {
 function renderAll() { applyDisplayPreferences(); renderNav(); renderHeaders(); renderCalendar(); renderDayEntries(); renderDesktopSheet(); renderSubScreen(); renderInvoiceScreen(); renderSettings(); renderSyncScreen(); renderReceiptScreen(); }
 function renderNav() {
   if (activeScreen === 'sub' && !subcontractEnabled()) activeScreen = 'cal';
-  if (activeScreen !== 'cal') isDayModalOpen = false;
+  if (activeScreen !== 'cal') { isDayModalOpen = false; isSheetPageOpen = false; }
+  document.body.classList.toggle('sheet-mobile-open', activeScreen === 'cal' && isSheetPageOpen);
   document.querySelectorAll('.screen').forEach((el) => el.classList.remove('active', 'print-active'));
   document.getElementById(`sc-${activeScreen}`)?.classList.add('active');
   document.querySelectorAll('.nav-item').forEach((el) => el.classList.toggle('active', el.dataset.screen === activeScreen));
@@ -540,11 +543,11 @@ function desktopSheetInput({ field, value = '', id = '', extra = '', type = 'tex
 function desktopSheetRow(entry, date, dayLabel, expenseColumns) {
   const calc = entry ? calcEntry(entry) : null;
   const expenses = entry?.expenses || {};
+  const siteClass = entry?.shift === 'night' ? 'desktop-sheet-site night' : 'desktop-sheet-site';
   return `<tr data-sheet-row data-entry-id="${escapeHtml(entry?.id || '')}" data-date="${escapeHtml(date)}">
     <td class="desktop-sheet-day">${dayLabel}</td>
     <td>${desktopSheetInput({ field: 'company', value: entry?.company || '' })}</td>
-    <td>${desktopSheetInput({ field: 'site', value: entry?.site || '' })}</td>
-    <td><select class="desktop-sheet-input" data-sheet-field="shift"><option value="day" ${entry?.shift === 'day' ? 'selected' : ''}>日勤</option><option value="night" ${entry?.shift === 'night' ? 'selected' : ''}>夜勤</option><option value="trip" ${entry?.shift === 'trip' ? 'selected' : ''}>出張</option></select></td>
+    <td class="${siteClass}">${desktopSheetInput({ field: 'site', value: entry?.site || '' })}</td>
     <td>${desktopSheetInput({ field: 'qty', value: entry ? qtyLabel(calc.qty) : '', extra: 'num', type: 'number' })}</td>
     <td>${desktopSheetInput({ field: 'unitRate', value: entry && calc.unitRate ? calc.unitRate : '', extra: 'num', type: 'number' })}</td>
     <td class="desktop-sheet-total" data-sheet-total="labor">${entry && calc.labor ? yenPlain(calc.labor) : ''}</td>
@@ -567,9 +570,9 @@ function renderDesktopSheet() {
     if (!entries.length) rows.push(desktopSheetRow(null, date, day, expenseColumns));
     entries.forEach((entry, index) => rows.push(desktopSheetRow(entry, date, index === 0 ? day : '', expenseColumns)));
   }
-  panel.innerHTML = `<div class="desktop-sheet-head"><div><strong>${cursor.getMonth() + 1}月 出面表</strong><span>PC編集用</span></div></div>
+  panel.innerHTML = `<div class="desktop-sheet-head"><div><strong>${cursor.getMonth() + 1}月 出面表</strong><span>PC編集用</span></div><button class="desktop-sheet-close" type="button" data-close-sheet-page>カレンダーへ</button></div>
     <div class="desktop-sheet-scroll"><table class="desktop-sheet-table">
-      <thead><tr><th>日</th><th>会社名</th><th>現場名</th><th>区分</th><th>人工</th><th>単価</th><th>人工計</th><th>残業h</th><th>残業単価</th><th>残業計</th>${expenseColumns.map((item) => `<th>${escapeHtml(item.label)}</th>`).join('')}<th>金額</th></tr></thead>
+      <thead><tr><th>日</th><th>会社名</th><th>現場名</th><th>人工</th><th>単価</th><th>人工計</th><th>残業h</th><th>残業単価</th><th>残業計</th>${expenseColumns.map((item) => `<th>${escapeHtml(item.label)}</th>`).join('')}<th>金額</th></tr></thead>
       <tbody>${rows.join('')}</tbody>
     </table></div>`;
 }
@@ -604,6 +607,16 @@ function openDayModal(date) {
 function closeDayModal() {
   isDayModalOpen = false;
   document.getElementById('day-modal-bg')?.classList.remove('open');
+}
+function openSheetPage() {
+  if (activeScreen !== 'cal') return;
+  isSheetPageOpen = true;
+  closeDayModal();
+  document.body.classList.add('sheet-mobile-open');
+}
+function closeSheetPage() {
+  isSheetPageOpen = false;
+  document.body.classList.remove('sheet-mobile-open');
 }
 function renderSubScreen() {
   const body = document.getElementById('sub-body');
@@ -1963,6 +1976,8 @@ function bindEvents() {
     if (removeSettingItem) { const hiddenId = removeSettingItem.dataset.removeSettingItem; const index = Number(removeSettingItem.dataset.removeIndex); const values = settingListValues(hiddenId).filter((_, itemIndex) => itemIndex !== index); writeSettingList(hiddenId, values); renderSettingListEditors(); scheduleSettingsAutosave({ immediate: true, section: 'expenses' }); return; }
     const closeDayButton = event.target.closest('[data-close-day-modal]');
     if (closeDayButton || event.target.id === 'day-modal-bg') { closeDayModal(); return; }
+    const closeSheetButton = event.target.closest('[data-close-sheet-page]');
+    if (closeSheetButton) { closeSheetPage(); return; }
     const menuButton = event.target.closest('#menu-toggle-btn,[data-menu-open]');
     if (menuButton) {
       const menu = menuButton.closest('.topbar').querySelector('.top-menu');
@@ -2003,6 +2018,23 @@ function bindEvents() {
       document.querySelectorAll('.top-menu').forEach((menu) => menu.classList.add('hidden'));
     }
   });
+
+  document.addEventListener('touchstart', (event) => {
+    if (activeScreen !== 'cal' || window.innerWidth >= 900 || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    sheetSwipeStart = { x: touch.clientX, y: touch.clientY, inSheet: !!event.target.closest('#desktop-sheet-panel') };
+  }, { passive: true });
+
+  document.addEventListener('touchend', (event) => {
+    if (!sheetSwipeStart || activeScreen !== 'cal' || window.innerWidth >= 900) { sheetSwipeStart = null; return; }
+    const touch = event.changedTouches[0];
+    const dx = touch.clientX - sheetSwipeStart.x;
+    const dy = touch.clientY - sheetSwipeStart.y;
+    const horizontal = Math.abs(dx) > 70 && Math.abs(dy) < 55;
+    if (horizontal && dx > 0 && !isSheetPageOpen && !isDayModalOpen && !document.getElementById('modal-bg')?.classList.contains('open')) openSheetPage();
+    if (horizontal && dx < 0 && isSheetPageOpen) closeSheetPage();
+    sheetSwipeStart = null;
+  }, { passive: true });
 
   document.addEventListener('change', (event) => {
     const sheetInput = event.target.closest('[data-sheet-field]');
