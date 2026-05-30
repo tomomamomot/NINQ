@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.30-5';
+const APP_VERSION = 'v2026.05.30-6';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -48,6 +48,8 @@ let isSheetPageOpen = false;
 let sheetPinchStart = null;
 let sheetDragStart = null;
 let sheetZoom = 1;
+let sheetSelection = null;
+let sheetMouseSelecting = false;
 
 function loadState() {
   try {
@@ -542,38 +544,50 @@ function desktopSheetExpenseColumns() {
 function desktopSheetInput({ field, value = '', id = '', extra = '', type = 'text' }) {
   return `<input class="desktop-sheet-input ${extra}" type="${type}" data-sheet-field="${field}" value="${escapeHtml(value)}" ${id ? `data-expense-id="${escapeHtml(id)}"` : ''}>`;
 }
-function desktopSheetRow(entry, date, dayLabel, expenseColumns) {
+function desktopSheetCell(content, rowIndex, colIndex, className = '') {
+  return `<td class="${className}" data-sheet-cell data-row-index="${rowIndex}" data-col-index="${colIndex}">${content}</td>`;
+}
+function desktopSheetColgroup(expenseColumns) {
+  const widths = [36, 86, 188, 42, 58, 62, 48, 70, 74, ...expenseColumns.map(() => 64), 86];
+  return `<colgroup>${widths.map((width, index) => `<col class="${index === 1 ? 'desktop-sheet-company-col' : ''}" style="width:${width}px">`).join('')}</colgroup>`;
+}
+function desktopSheetRow(entry, date, dayLabel, expenseColumns, rowIndex) {
   const calc = entry ? calcEntry(entry) : null;
   const expenses = entry?.expenses || {};
   const siteClass = entry?.shift === 'night' ? 'desktop-sheet-site night' : 'desktop-sheet-site';
+  let colIndex = 0;
+  const cell = (content, className = '') => desktopSheetCell(content, rowIndex, colIndex++, className);
   return `<tr data-sheet-row data-entry-id="${escapeHtml(entry?.id || '')}" data-date="${escapeHtml(date)}">
-    <td class="desktop-sheet-day">${dayLabel}</td>
-    <td>${desktopSheetInput({ field: 'company', value: entry?.company || '' })}</td>
-    <td class="${siteClass}">${desktopSheetInput({ field: 'site', value: entry?.site || '' })}</td>
-    <td>${desktopSheetInput({ field: 'qty', value: entry ? qtyLabel(calc.qty) : '', extra: 'num', type: 'number' })}</td>
-    <td>${desktopSheetInput({ field: 'unitRate', value: entry && calc.unitRate ? calc.unitRate : '', extra: 'num', type: 'number' })}</td>
-    <td class="desktop-sheet-total" data-sheet-total="labor">${entry && calc.labor ? yenPlain(calc.labor) : ''}</td>
-    <td>${desktopSheetInput({ field: 'otHours', value: entry && calc.otHours ? calc.otHours : '', extra: 'num', type: 'number' })}</td>
-    <td>${desktopSheetInput({ field: 'otRate', value: entry && calc.otRate ? calc.otRate : '', extra: 'num', type: 'number' })}</td>
-    <td class="desktop-sheet-total" data-sheet-total="overtime">${entry && calc.overtime ? yenPlain(calc.overtime) : ''}</td>
-    ${expenseColumns.map((item) => `<td>${desktopSheetInput({ field: 'expense', id: item.id, value: num(expenses[item.id]) || '', extra: 'num', type: 'number' })}</td>`).join('')}
-    <td class="desktop-sheet-total" data-sheet-total="subtotal">${entry && calc.subtotal ? yenPlain(calc.subtotal) : ''}</td>
+    ${cell(dayLabel, 'desktop-sheet-day')}
+    ${cell(desktopSheetInput({ field: 'company', value: entry?.company || '' }))}
+    ${cell(desktopSheetInput({ field: 'site', value: entry?.site || '' }), siteClass)}
+    ${cell(desktopSheetInput({ field: 'qty', value: entry ? qtyLabel(calc.qty) : '', extra: 'num', type: 'number' }))}
+    ${cell(desktopSheetInput({ field: 'unitRate', value: entry && calc.unitRate ? calc.unitRate : '', extra: 'num', type: 'number' }))}
+    ${cell(entry && calc.labor ? yenPlain(calc.labor) : '', 'desktop-sheet-total" data-sheet-total="labor')}
+    ${cell(desktopSheetInput({ field: 'otHours', value: entry && calc.otHours ? calc.otHours : '', extra: 'num', type: 'number' }))}
+    ${cell(desktopSheetInput({ field: 'otRate', value: entry && calc.otRate ? calc.otRate : '', extra: 'num', type: 'number' }))}
+    ${cell(entry && calc.overtime ? yenPlain(calc.overtime) : '', 'desktop-sheet-total" data-sheet-total="overtime')}
+    ${expenseColumns.map((item) => cell(desktopSheetInput({ field: 'expense', id: item.id, value: num(expenses[item.id]) || '', extra: 'num', type: 'number' }))).join('')}
+    ${cell(entry && calc.subtotal ? yenPlain(calc.subtotal) : '', 'desktop-sheet-total" data-sheet-total="subtotal')}
   </tr>`;
 }
 function renderDesktopSheet() {
   const panel = document.getElementById('desktop-sheet-panel');
   if (!panel) return;
+  sheetSelection = null;
+  sheetMouseSelecting = false;
   const expenseColumns = desktopSheetExpenseColumns();
   const days = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
   const rows = [];
   for (let day = 1; day <= days; day += 1) {
     const date = toYmd(new Date(cursor.getFullYear(), cursor.getMonth(), day));
     const entries = dayEntries(date).filter((entry) => entry.type === 'self');
-    if (!entries.length) rows.push(desktopSheetRow(null, date, day, expenseColumns));
-    entries.forEach((entry, index) => rows.push(desktopSheetRow(entry, date, index === 0 ? day : '', expenseColumns)));
+    if (!entries.length) rows.push(desktopSheetRow(null, date, day, expenseColumns, rows.length));
+    entries.forEach((entry, index) => rows.push(desktopSheetRow(entry, date, index === 0 ? day : '', expenseColumns, rows.length)));
   }
   panel.innerHTML = `<div class="desktop-sheet-head"><div><strong>${cursor.getMonth() + 1}月 出面表</strong><span>PC編集用</span></div><button class="desktop-sheet-close" type="button" data-close-sheet-page>カレンダーへ</button></div>
     <div class="desktop-sheet-scroll"><table class="desktop-sheet-table">
+      ${desktopSheetColgroup(expenseColumns)}
       <thead><tr><th>日</th><th>会社名</th><th>現場名</th><th>人工</th><th>単価</th><th>人工計</th><th>残業h</th><th>残業単価</th><th>残業計</th>${expenseColumns.map((item) => `<th>${escapeHtml(item.label)}</th>`).join('')}<th>金額</th></tr></thead>
       <tbody>${rows.join('')}</tbody>
     </table></div>`;
@@ -642,6 +656,42 @@ function applySheetZoom() {
   const table = document.querySelector('#desktop-sheet-panel .desktop-sheet-table');
   if (!table) return;
   table.style.zoom = String(sheetZoom);
+}
+function clearSheetSelection() {
+  document.querySelectorAll('.desktop-sheet-cell-selected').forEach((cell) => cell.classList.remove('desktop-sheet-cell-selected', 'desktop-sheet-cell-anchor'));
+}
+function setSheetSelection(anchor, focus) {
+  if (!anchor || !focus) return;
+  const startRow = Number(anchor.dataset.rowIndex), endRow = Number(focus.dataset.rowIndex);
+  const startCol = Number(anchor.dataset.colIndex), endCol = Number(focus.dataset.colIndex);
+  const minRow = Math.min(startRow, endRow), maxRow = Math.max(startRow, endRow);
+  const minCol = Math.min(startCol, endCol), maxCol = Math.max(startCol, endCol);
+  sheetSelection = { minRow, maxRow, minCol, maxCol };
+  clearSheetSelection();
+  document.querySelectorAll('#desktop-sheet-panel [data-sheet-cell]').forEach((cell) => {
+    const row = Number(cell.dataset.rowIndex), col = Number(cell.dataset.colIndex);
+    const selected = row >= minRow && row <= maxRow && col >= minCol && col <= maxCol;
+    cell.classList.toggle('desktop-sheet-cell-selected', selected);
+  });
+  anchor.classList.add('desktop-sheet-cell-anchor');
+}
+function sheetCellCopyValue(cell) {
+  const input = cell.querySelector('[data-sheet-field]');
+  return input ? input.value : cell.textContent.trim();
+}
+function copySheetSelection(event) {
+  if (!sheetSelection || !event.target.closest?.('#desktop-sheet-panel')) return;
+  const lines = [];
+  for (let row = sheetSelection.minRow; row <= sheetSelection.maxRow; row += 1) {
+    const values = [];
+    for (let col = sheetSelection.minCol; col <= sheetSelection.maxCol; col += 1) {
+      const cell = document.querySelector(`#desktop-sheet-panel [data-row-index="${row}"][data-col-index="${col}"]`);
+      values.push(cell ? sheetCellCopyValue(cell) : '');
+    }
+    lines.push(values.join('\t'));
+  }
+  event.clipboardData.setData('text/plain', lines.join('\n'));
+  event.preventDefault();
 }
 function renderSubScreen() {
   const body = document.getElementById('sub-body');
@@ -2044,6 +2094,28 @@ function bindEvents() {
       document.querySelectorAll('.top-menu').forEach((menu) => menu.classList.add('hidden'));
     }
   });
+
+  document.addEventListener('mousedown', (event) => {
+    if (window.innerWidth < 900) return;
+    const cell = event.target.closest('#desktop-sheet-panel [data-sheet-cell]');
+    if (!cell || event.button !== 0) return;
+    sheetMouseSelecting = true;
+    setSheetSelection(cell, cell);
+  });
+
+  document.addEventListener('mouseover', (event) => {
+    if (!sheetMouseSelecting || window.innerWidth < 900) return;
+    const cell = event.target.closest('#desktop-sheet-panel [data-sheet-cell]');
+    if (!cell) return;
+    const anchor = document.querySelector('#desktop-sheet-panel .desktop-sheet-cell-anchor');
+    setSheetSelection(anchor || cell, cell);
+  });
+
+  document.addEventListener('mouseup', () => {
+    sheetMouseSelecting = false;
+  });
+
+  document.addEventListener('copy', copySheetSelection);
 
   document.addEventListener('touchstart', (event) => {
     if (activeScreen !== 'cal' || window.innerWidth >= 900 || !isSheetPageOpen) return;
