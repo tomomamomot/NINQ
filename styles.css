@@ -244,12 +244,13 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 @media (min-width:900px){
   body{max-width:none}
   .screen:not(#sc-cal){max-width:430px;margin:0 auto}
-  #sc-cal.screen.active{display:grid;grid-template-columns:430px minmax(560px,1fr);grid-template-rows:auto auto auto auto;gap:0 16px;width:min(1240px,calc(100vw - 28px));margin:0 auto;align-items:start}
-  #sc-cal>.topbar,#sc-cal>.month-nav,#sc-cal>.cal-grid,#sc-cal>#day-entries,#sc-cal>.sum-grid{grid-column:1}
-  #sc-cal>.desktop-sheet-panel{grid-column:2;grid-row:1 / span 4;display:block;position:sticky;top:10px;max-height:calc(100dvh - 22px);overflow:hidden;background:#fff;border:1px solid var(--line);box-shadow:var(--shadow)}
+  #sc-cal.screen.active{display:block;width:100%;max-width:none;margin:0;padding-left:max(14px,calc((100vw - 1240px) / 2));padding-right:14px}
+  #sc-cal>.topbar,#sc-cal>.month-nav,#sc-cal>.cal-grid,#sc-cal>#day-entries,#sc-cal>.sum-grid{width:430px;max-width:430px;margin-left:0;margin-right:0}
+  #sc-cal>.topbar{position:sticky}
+  #sc-cal>.desktop-sheet-panel{display:block;position:fixed;left:max(460px,calc((100vw - 1240px) / 2 + 446px));right:14px;top:10px;bottom:10px;max-height:none;overflow:hidden;background:#fff;border:1px solid var(--line);box-shadow:var(--shadow);z-index:30}
   .desktop-sheet-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--line);background:#f8fafc}
   .desktop-sheet-head strong{font-size:20px;font-weight:900}.desktop-sheet-head span{display:block;margin-top:2px;color:var(--sub);font-size:12px;font-weight:800}
-  .desktop-sheet-scroll{max-height:calc(100dvh - 76px);overflow:auto}
+  .desktop-sheet-scroll{height:calc(100dvh - 76px);overflow:auto}
   .desktop-sheet-table{width:100%;min-width:980px;border-collapse:collapse;font-size:12px;background:#fff;color:#111}
   .desktop-sheet-table th,.desktop-sheet-table td{border:1px solid #222;padding:0;height:30px;vertical-align:middle;background:#fff}
   .desktop-sheet-table th{position:sticky;top:0;z-index:2;background:#f3f6fb;font-weight:900;text-align:center;white-space:nowrap;padding:5px 4px}
