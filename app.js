@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.30-4';
+const APP_VERSION = 'v2026.05.30-5';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -45,8 +45,8 @@ let driveSyncTimer = null;
 let driveSyncInFlight = false;
 let driveSyncQueued = false;
 let isSheetPageOpen = false;
-let sheetSwipeStart = null;
 let sheetPinchStart = null;
+let sheetDragStart = null;
 let sheetZoom = 1;
 
 function loadState() {
@@ -616,13 +616,23 @@ function openSheetPage() {
   isSheetPageOpen = true;
   closeDayModal();
   document.body.classList.add('sheet-mobile-open');
+  sheetZoom = sheetFitZoom();
+  applySheetZoom();
 }
 function closeSheetPage() {
   isSheetPageOpen = false;
   document.body.classList.remove('sheet-mobile-open');
+  window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
 }
 function clampSheetZoom(value) {
-  return Math.min(2.2, Math.max(0.85, Number(value) || 1));
+  return Math.min(2.2, Math.max(0.32, Number(value) || 1));
+}
+function sheetFitZoom() {
+  const scroll = document.querySelector('#desktop-sheet-panel .desktop-sheet-scroll');
+  const table = document.querySelector('#desktop-sheet-panel .desktop-sheet-table');
+  if (!scroll || !table) return 1;
+  const tableWidth = table.offsetWidth || 920;
+  return clampSheetZoom((scroll.clientWidth - 8) / tableWidth);
 }
 function touchDistance(touches) {
   const a = touches[0], b = touches[1];
@@ -1952,6 +1962,7 @@ function bindEvents() {
   ['prev-month-btn', 'sub-prev-month-btn', 'inv-prev-month-btn'].forEach((id) => document.getElementById(id).addEventListener('click', () => { cursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1); if (monthKey(selectedDate) !== monthKey(cursor)) selectedDate = toYmd(cursor); renderAll(); }));
   ['next-month-btn', 'sub-next-month-btn', 'inv-next-month-btn'].forEach((id) => document.getElementById(id).addEventListener('click', () => { cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1); if (monthKey(selectedDate) !== monthKey(cursor)) selectedDate = toYmd(cursor); renderAll(); }));
   document.getElementById('fab-main').addEventListener('click', () => { closeDayModal(); openModal('self'); });
+  document.getElementById('open-sheet-btn')?.addEventListener('click', openSheetPage);
   document.getElementById('fab-sub').addEventListener('click', () => { if (!subcontractEnabled()) return; closeDayModal(); openModal('sub'); });
   document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
   document.getElementById('add-company-btn')?.addEventListener('click', addCompanyPreset);
@@ -2035,9 +2046,16 @@ function bindEvents() {
   });
 
   document.addEventListener('touchstart', (event) => {
-    if (activeScreen !== 'cal' || window.innerWidth >= 900 || event.touches.length !== 1) return;
-    const touch = event.touches[0];
-    sheetSwipeStart = { x: touch.clientX, y: touch.clientY, inSheet: !!event.target.closest('#desktop-sheet-panel') };
+    if (activeScreen !== 'cal' || window.innerWidth >= 900 || !isSheetPageOpen) return;
+    if (event.touches.length === 1 && event.target.closest('#desktop-sheet-panel')) {
+      const scroll = document.querySelector('#desktop-sheet-panel .desktop-sheet-scroll');
+      const touch = event.touches[0];
+      sheetDragStart = scroll ? { x: touch.clientX, y: touch.clientY, left: scroll.scrollLeft, top: scroll.scrollTop, active: false } : null;
+    }
+    if (event.touches.length === 2 && event.target.closest('#desktop-sheet-panel')) {
+      sheetPinchStart = { distance: touchDistance(event.touches), zoom: sheetZoom };
+      sheetDragStart = null;
+    }
   }, { passive: true });
 
   document.addEventListener('touchmove', (event) => {
@@ -2048,19 +2066,26 @@ function bindEvents() {
       const nextZoom = sheetPinchStart.zoom * (touchDistance(event.touches) / sheetPinchStart.distance);
       sheetZoom = clampSheetZoom(nextZoom);
       applySheetZoom();
+      return;
+    }
+    if (event.touches.length === 1 && sheetDragStart && event.target.closest('#desktop-sheet-panel')) {
+      const scroll = document.querySelector('#desktop-sheet-panel .desktop-sheet-scroll');
+      if (!scroll) return;
+      const touch = event.touches[0];
+      const dx = touch.clientX - sheetDragStart.x;
+      const dy = touch.clientY - sheetDragStart.y;
+      if (!sheetDragStart.active && Math.hypot(dx, dy) < 7) return;
+      sheetDragStart.active = true;
+      event.preventDefault();
+      if (document.activeElement?.matches?.('.desktop-sheet-input')) document.activeElement.blur();
+      scroll.scrollLeft = sheetDragStart.left - dx;
+      scroll.scrollTop = sheetDragStart.top - dy;
     }
   }, { passive: false });
 
   document.addEventListener('touchend', (event) => {
     if (event.touches.length < 2) sheetPinchStart = null;
-    if (!sheetSwipeStart || activeScreen !== 'cal' || window.innerWidth >= 900) { sheetSwipeStart = null; return; }
-    const touch = event.changedTouches[0];
-    const dx = touch.clientX - sheetSwipeStart.x;
-    const dy = touch.clientY - sheetSwipeStart.y;
-    const horizontal = Math.abs(dx) > 70 && Math.abs(dy) < 55;
-    if (horizontal && dx < 0 && !isSheetPageOpen && !isDayModalOpen && !document.getElementById('modal-bg')?.classList.contains('open')) openSheetPage();
-    if (horizontal && dx > 0 && isSheetPageOpen) closeSheetPage();
-    sheetSwipeStart = null;
+    if (event.touches.length === 0) sheetDragStart = null;
   }, { passive: true });
 
   document.addEventListener('change', (event) => {
