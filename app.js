@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.30-6';
+const APP_VERSION = 'v2026.05.30-7';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -679,19 +679,71 @@ function sheetCellCopyValue(cell) {
   const input = cell.querySelector('[data-sheet-field]');
   return input ? input.value : cell.textContent.trim();
 }
+function sheetCellAt(row, col) {
+  return document.querySelector(`#desktop-sheet-panel [data-row-index="${row}"][data-col-index="${col}"]`);
+}
 function copySheetSelection(event) {
   if (!sheetSelection || !event.target.closest?.('#desktop-sheet-panel')) return;
   const lines = [];
   for (let row = sheetSelection.minRow; row <= sheetSelection.maxRow; row += 1) {
     const values = [];
     for (let col = sheetSelection.minCol; col <= sheetSelection.maxCol; col += 1) {
-      const cell = document.querySelector(`#desktop-sheet-panel [data-row-index="${row}"][data-col-index="${col}"]`);
+      const cell = sheetCellAt(row, col);
       values.push(cell ? sheetCellCopyValue(cell) : '');
     }
     lines.push(values.join('\t'));
   }
   event.clipboardData.setData('text/plain', lines.join('\n'));
   event.preventDefault();
+}
+function parseSheetClipboard(text) {
+  const normalized = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  return lines.map((line) => line.split('\t'));
+}
+function normalizePastedValue(value, input) {
+  let text = String(value || '').trim();
+  if (input.type === 'number') {
+    text = text.replace(/[０-９．，－]/g, (char) => {
+      const map = { '．': '.', '，': ',', '－': '-' };
+      return map[char] || String.fromCharCode(char.charCodeAt(0) - 0xFEE0);
+    }).replace(/[¥￥,\s]/g, '');
+  }
+  return text;
+}
+function pasteSheetSelection(event) {
+  const panel = event.target.closest?.('#desktop-sheet-panel');
+  if (!panel) return;
+  const text = event.clipboardData?.getData('text/plain') || '';
+  const matrix = parseSheetClipboard(text);
+  if (!matrix.length || !matrix.some((row) => row.some((value) => value !== ''))) return;
+  const activeCell = event.target.closest?.('[data-sheet-cell]')
+    || document.activeElement?.closest?.('[data-sheet-cell]')
+    || document.querySelector('#desktop-sheet-panel .desktop-sheet-cell-anchor')
+    || (sheetSelection ? sheetCellAt(sheetSelection.minRow, sheetSelection.minCol) : null);
+  if (!activeCell) return;
+  event.preventDefault();
+  const startRow = Number(activeCell.dataset.rowIndex);
+  const startCol = Number(activeCell.dataset.colIndex);
+  const changedRows = new Set();
+  let lastCell = activeCell;
+  matrix.forEach((sourceRow, rowOffset) => {
+    sourceRow.forEach((value, colOffset) => {
+      const cell = sheetCellAt(startRow + rowOffset, startCol + colOffset);
+      if (!cell) return;
+      lastCell = cell;
+      const input = cell.querySelector('[data-sheet-field]');
+      if (!input || input.readOnly || input.disabled) return;
+      input.value = normalizePastedValue(value, input);
+      changedRows.add(input.closest('[data-sheet-row]'));
+    });
+  });
+  changedRows.forEach((row) => {
+    updateDesktopSheetRowTotals(row);
+    saveDesktopSheetRow(row);
+  });
+  setSheetSelection(activeCell, lastCell);
 }
 function renderSubScreen() {
   const body = document.getElementById('sub-body');
@@ -2116,6 +2168,7 @@ function bindEvents() {
   });
 
   document.addEventListener('copy', copySheetSelection);
+  document.addEventListener('paste', pasteSheetSelection);
 
   document.addEventListener('touchstart', (event) => {
     if (activeScreen !== 'cal' || window.innerWidth >= 900 || !isSheetPageOpen) return;
