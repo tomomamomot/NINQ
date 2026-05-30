@@ -271,7 +271,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
   body.sheet-mobile-open #desktop-sheet-panel .desktop-sheet-head strong{font-size:20px;font-weight:900}
   body.sheet-mobile-open #desktop-sheet-panel .desktop-sheet-head span{display:block;margin-top:2px;color:var(--sub);font-size:12px;font-weight:800}
   body.sheet-mobile-open .desktop-sheet-close{display:inline-flex;align-items:center;justify-content:center;width:auto;border:none;border-radius:12px;background:var(--accent);color:#fff;padding:10px 12px;font-size:14px;font-weight:900}
-  body.sheet-mobile-open .desktop-sheet-scroll{height:calc(100dvh - 62px - var(--safe-top));overflow:auto}
+  body.sheet-mobile-open .desktop-sheet-scroll{height:calc(100dvh - 62px - var(--safe-top));overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
   body.sheet-mobile-open .desktop-sheet-table{width:100%;min-width:920px;border-collapse:collapse;font-size:12px;color:#111}
   body.sheet-mobile-open .desktop-sheet-table th,body.sheet-mobile-open .desktop-sheet-table td{border:1px solid #222;padding:0;height:32px;background:#fff}
   body.sheet-mobile-open .desktop-sheet-table th{position:sticky;top:0;z-index:2;background:#f3f6fb;padding:5px 4px;white-space:nowrap}

@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.30-3';
+const APP_VERSION = 'v2026.05.30-4';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -46,6 +46,8 @@ let driveSyncInFlight = false;
 let driveSyncQueued = false;
 let isSheetPageOpen = false;
 let sheetSwipeStart = null;
+let sheetPinchStart = null;
+let sheetZoom = 1;
 
 function loadState() {
   try {
@@ -575,6 +577,7 @@ function renderDesktopSheet() {
       <thead><tr><th>日</th><th>会社名</th><th>現場名</th><th>人工</th><th>単価</th><th>人工計</th><th>残業h</th><th>残業単価</th><th>残業計</th>${expenseColumns.map((item) => `<th>${escapeHtml(item.label)}</th>`).join('')}<th>金額</th></tr></thead>
       <tbody>${rows.join('')}</tbody>
     </table></div>`;
+  applySheetZoom();
 }
 function renderDayEntries() {
   const legacy = document.getElementById('day-entries');
@@ -617,6 +620,18 @@ function openSheetPage() {
 function closeSheetPage() {
   isSheetPageOpen = false;
   document.body.classList.remove('sheet-mobile-open');
+}
+function clampSheetZoom(value) {
+  return Math.min(2.2, Math.max(0.85, Number(value) || 1));
+}
+function touchDistance(touches) {
+  const a = touches[0], b = touches[1];
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+function applySheetZoom() {
+  const table = document.querySelector('#desktop-sheet-panel .desktop-sheet-table');
+  if (!table) return;
+  table.style.zoom = String(sheetZoom);
 }
 function renderSubScreen() {
   const body = document.getElementById('sub-body');
@@ -2025,14 +2040,26 @@ function bindEvents() {
     sheetSwipeStart = { x: touch.clientX, y: touch.clientY, inSheet: !!event.target.closest('#desktop-sheet-panel') };
   }, { passive: true });
 
+  document.addEventListener('touchmove', (event) => {
+    if (activeScreen !== 'cal' || window.innerWidth >= 900 || !isSheetPageOpen) return;
+    if (event.touches.length === 2 && event.target.closest('#desktop-sheet-panel')) {
+      event.preventDefault();
+      if (!sheetPinchStart) sheetPinchStart = { distance: touchDistance(event.touches), zoom: sheetZoom };
+      const nextZoom = sheetPinchStart.zoom * (touchDistance(event.touches) / sheetPinchStart.distance);
+      sheetZoom = clampSheetZoom(nextZoom);
+      applySheetZoom();
+    }
+  }, { passive: false });
+
   document.addEventListener('touchend', (event) => {
+    if (event.touches.length < 2) sheetPinchStart = null;
     if (!sheetSwipeStart || activeScreen !== 'cal' || window.innerWidth >= 900) { sheetSwipeStart = null; return; }
     const touch = event.changedTouches[0];
     const dx = touch.clientX - sheetSwipeStart.x;
     const dy = touch.clientY - sheetSwipeStart.y;
     const horizontal = Math.abs(dx) > 70 && Math.abs(dy) < 55;
-    if (horizontal && dx > 0 && !isSheetPageOpen && !isDayModalOpen && !document.getElementById('modal-bg')?.classList.contains('open')) openSheetPage();
-    if (horizontal && dx < 0 && isSheetPageOpen) closeSheetPage();
+    if (horizontal && dx < 0 && !isSheetPageOpen && !isDayModalOpen && !document.getElementById('modal-bg')?.classList.contains('open')) openSheetPage();
+    if (horizontal && dx > 0 && isSheetPageOpen) closeSheetPage();
     sheetSwipeStart = null;
   }, { passive: true });
 
