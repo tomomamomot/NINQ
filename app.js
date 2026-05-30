@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.31-6';
+const APP_VERSION = 'v2026.05.31-7';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -477,8 +477,10 @@ function renderNav() {
   if (activeScreen === 'sub' && !subcontractEnabled()) activeScreen = 'cal';
   if (activeScreen !== 'cal') { isDayModalOpen = false; isSheetPageOpen = false; }
   document.body.classList.toggle('sheet-mobile-open', activeScreen === 'cal' && isSheetPageOpen);
+  document.body.classList.toggle('pc-calendar-pinned', activeScreen !== 'cal');
   document.querySelectorAll('.screen').forEach((el) => el.classList.remove('active', 'print-active'));
   document.getElementById(`sc-${activeScreen}`)?.classList.add('active');
+  document.getElementById('sc-cal')?.classList.toggle('pc-pinned', activeScreen !== 'cal');
   document.querySelectorAll('.nav-item').forEach((el) => el.classList.toggle('active', el.dataset.screen === activeScreen));
   syncMenuClones();
   document.querySelectorAll('[data-screen="sub"],[data-screen-link="sub"]').forEach((el) => el.classList.toggle('hidden', !subcontractEnabled()));

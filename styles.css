@@ -152,7 +152,6 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .invoice-table th,.invoice-table td{border:1px solid #111;padding:5px 6px;height:25px;text-align:center;vertical-align:middle;background:#fff;color:#111;font-weight:400}
 .invoice-table th{font-weight:700}
 .invoice-table .left{text-align:left}.invoice-table .right{text-align:right}.invoice-table .center{text-align:center}
-.invoice-table tr.invoice-night-row td:nth-child(2){background:var(--night)!important;color:#fff!important;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .invoice-total-row td{height:32px;font-weight:800}
 .invoice-bank{display:grid;grid-template-columns:90px 1fr;gap:5px 14px;width:460px;margin-top:18px;font-size:12px}
 .invoice-bank strong{grid-row:1/5}
@@ -249,6 +248,10 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
   body{max-width:none}
   .screen:not(#sc-cal){max-width:430px;margin:0 auto}
   #sc-cal.screen.active{display:block;width:100%;max-width:none;margin:0;padding-left:4px;padding-right:8px}
+  body.pc-calendar-pinned{padding-left:440px}
+  body.pc-calendar-pinned .screen:not(#sc-cal).active{display:block;max-width:760px;margin:0 auto;padding-bottom:24px}
+  #sc-cal.pc-pinned{display:block;position:fixed;left:4px;top:0;bottom:0;width:430px;max-width:430px;margin:0;overflow:auto;background:var(--bg);z-index:35;padding-bottom:24px}
+  #sc-cal.pc-pinned>.desktop-sheet-panel{display:none}
   #sc-cal>.topbar,#sc-cal>.month-nav,#sc-cal>.cal-grid,#sc-cal>#day-entries,#sc-cal>.sum-grid{width:430px;max-width:430px;margin-left:0;margin-right:0}
   #sc-cal>.topbar{position:sticky}
   #sc-cal>.desktop-sheet-panel{display:block;position:fixed;left:440px;right:8px;top:8px;bottom:8px;max-height:none;overflow:hidden;background:#fff;border:1px solid var(--line);box-shadow:var(--shadow);z-index:30}
