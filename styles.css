@@ -160,7 +160,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .demen-sheet th,.demen-sheet td{border:1px solid #111!important;background:#fff!important;color:#111!important;padding:4px 5px!important;height:23px;font-weight:400;white-space:nowrap}
 .demen-sheet th{font-weight:700}.demen-sheet .left{text-align:left}.demen-sheet .right{text-align:right}.demen-sheet tfoot td{font-weight:700}
 .demen-title-row th{border:none!important;height:26px!important;font-size:12px}.demen-title-row .demen-title-main,.demen-title-row .demen-title-name{font-size:16px!important;font-weight:800!important}.demen-company-name{font-size:13px!important;font-weight:700!important}
-.demen-sheet td.demen-night-site{background:#bdd7ee!important;color:#111!important;font-weight:400}
+.demen-sheet td.demen-night-site,.demen-sheet tr.demen-night-row td.demen-night-site{background:#bdd7ee!important;color:#111!important;font-weight:400}
 .stamp-setting{display:grid;grid-template-columns:1fr 76px 58px;gap:8px;align-items:center;width:100%}
 .stamp-setting .btn-secondary{padding:10px 8px;font-size:13px;min-height:42px}
 .stamp-preview{width:56px;height:56px;object-fit:contain;border:1px solid var(--line);border-radius:10px;background:#fff}

@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.31-1';
+const APP_VERSION = 'v2026.05.31-2';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -448,6 +448,12 @@ function salesTotalForEntry(entry) {
 }
 function shiftLabel(shift) { return { day: '日勤', night: '夜勤', trip: '出張' }[shift] || '日勤'; }
 function shiftClass(shift) { return { day: 'day', night: 'night', trip: 'trip' }[shift] || 'day'; }
+function shiftSortValue(shift) { return { day: 1, trip: 2, night: 3 }[shift] || 9; }
+function sortEntriesForDemen(a, b) {
+  return shiftSortValue(a.shift) - shiftSortValue(b.shift)
+    || String(a.site || '').localeCompare(String(b.site || ''), 'ja')
+    || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+}
 function typeLabel(type) { return type === 'sub' ? '外注' : '自分'; }
 function pickSelectedCompany() { const companies = getInvoiceCompanies(); if (!companies.length) { selectedCompany = ''; return companies; } if (!companies.includes(selectedCompany)) selectedCompany = companies[0]; return companies; }
 function getInvoiceCompanies() { return [...new Set(monthEntries().filter((entry) => entry.type === 'self').map((entry) => entry.company).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ja')); }
@@ -615,9 +621,10 @@ function renderDesktopSheet() {
   const rows = [];
   for (let day = 1; day <= days; day += 1) {
     const date = toYmd(new Date(cursor.getFullYear(), cursor.getMonth(), day));
-    const entries = dayEntries(date).filter((entry) => entry.type === 'self');
+    const entries = dayEntries(date).filter((entry) => entry.type === 'self').sort(sortEntriesForDemen);
+    const hasMixedDayNight = new Set(entries.map((entry) => entry.shift)).size > 1;
     if (!entries.length) rows.push(desktopSheetRow(null, date, day, expenseColumns, rows.length));
-    entries.forEach((entry, index) => rows.push(desktopSheetRow(entry, date, index === 0 ? day : '', expenseColumns, rows.length)));
+    entries.forEach((entry, index) => rows.push(desktopSheetRow(entry, date, hasMixedDayNight || index === 0 ? day : '', expenseColumns, rows.length)));
   }
   panel.innerHTML = `<div class="desktop-sheet-head"><div><strong>${cursor.getMonth() + 1}月 出面表</strong><span>出力プレビュー / PC編集可</span></div><button class="desktop-sheet-close" type="button" data-close-sheet-page>カレンダーへ</button></div>
     <div class="desktop-sheet-scroll"><table class="desktop-sheet-table">
@@ -886,19 +893,18 @@ function buildDemenSheet(entries, totals, hidden) {
   const expenseColumns = totals.expenses;
   const days = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
   const expenseHeaders = `${DEMEN_EXPENSE_LABELS.map((label) => `<th>${escapeHtml(label)}</th>`).join('')}<th>金　額</th>`;
-  const shiftOrder = { day: 1, trip: 2, night: 3 };
   const demenRow = (day, entry = null) => {
     if (!entry) return `<tr><td>${day}</td><td class="left"></td><td></td><td class="right"></td><td class="right"></td><td></td><td class="right"></td><td class="right"></td>${expenseColumns.map(() => '<td class="right"></td>').join('')}<td class="right"></td></tr>`;
     const calc = calcEntry(entry);
     const expenses = expenseColumns.map((col) => num(entry.expenses?.[col.item.id]));
     const siteClass = entry.shift === 'night' ? 'left demen-night-site' : 'left';
-    return `<tr><td>${day}</td><td class="${siteClass}">${escapeHtml(entry.site || '')}</td><td>${calc.qty || ''}</td><td class="right">${calc.unitRate ? yenPlain(calc.unitRate, hidden) : ''}</td><td class="right">${calc.labor ? yenPlain(calc.labor, hidden) : ''}</td><td>${calc.otHours || ''}</td><td class="right">${calc.otRate ? yenPlain(calc.otRate, hidden) : ''}</td><td class="right">${calc.overtime ? yenPlain(calc.overtime, hidden) : ''}</td>${expenses.map((value) => `<td class="right">${value ? yenPlain(value, hidden) : ''}</td>`).join('')}<td class="right">${calc.subtotal ? yenPlain(calc.subtotal, hidden) : ''}</td></tr>`;
+    return `<tr class="${entry.shift === 'night' ? 'demen-night-row' : ''}"><td>${day}</td><td class="${siteClass}">${escapeHtml(entry.site || '')}</td><td>${calc.qty || ''}</td><td class="right">${calc.unitRate ? yenPlain(calc.unitRate, hidden) : ''}</td><td class="right">${calc.labor ? yenPlain(calc.labor, hidden) : ''}</td><td>${calc.otHours || ''}</td><td class="right">${calc.otRate ? yenPlain(calc.otRate, hidden) : ''}</td><td class="right">${calc.overtime ? yenPlain(calc.overtime, hidden) : ''}</td>${expenses.map((value) => `<td class="right">${value ? yenPlain(value, hidden) : ''}</td>`).join('')}<td class="right">${calc.subtotal ? yenPlain(calc.subtotal, hidden) : ''}</td></tr>`;
   };
   const bodyRows = Array.from({ length: days }, (_, index) => {
     const day = index + 1;
     const dayItems = entries
       .filter((entry) => Number(entry.date.slice(8, 10)) === day)
-      .sort((a, b) => (shiftOrder[a.shift] || 9) - (shiftOrder[b.shift] || 9) || String(a.site || '').localeCompare(String(b.site || ''), 'ja'));
+      .sort(sortEntriesForDemen);
     return dayItems.length ? dayItems.map((entry) => demenRow(day, entry)).join('') : demenRow(day);
   }).join('');
   return `
