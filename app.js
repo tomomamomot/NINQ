@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.31-2';
+const APP_VERSION = 'v2026.05.31-3';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -550,8 +550,8 @@ function desktopSheetExpenseColumns() {
 function desktopSheetInput({ field, value = '', id = '', extra = '', type = 'text' }) {
   return `<input class="desktop-sheet-input ${extra}" type="${type}" data-sheet-field="${field}" value="${escapeHtml(value)}" ${id ? `data-expense-id="${escapeHtml(id)}"` : ''}>`;
 }
-function desktopSheetCell(content, rowIndex, colIndex, className = '') {
-  return `<td class="${className}" data-sheet-cell data-row-index="${rowIndex}" data-col-index="${colIndex}">${content}</td>`;
+function desktopSheetCell(content, rowIndex, colIndex, className = '', attrs = '') {
+  return `<td class="${className}" data-sheet-cell data-row-index="${rowIndex}" data-col-index="${colIndex}" ${attrs}>${content}</td>`;
 }
 function desktopSheetColgroup(expenseColumns) {
   const widths = [36, 86, 188, 42, 58, 62, 48, 70, 74, ...expenseColumns.map(() => 64), 86];
@@ -587,14 +587,15 @@ function updateDesktopSheetFooter() {
   const sheetEntries = monthEntries().filter((entry) => entry.type === 'self');
   footer.outerHTML = desktopSheetFooter(desktopSheetTotals(sheetEntries, expenseColumns), expenseColumns);
 }
-function desktopSheetRow(entry, date, dayLabel, expenseColumns, rowIndex) {
+function desktopSheetRow(entry, date, dayLabel, expenseColumns, rowIndex, dayRowspan = 1) {
   const calc = entry ? calcEntry(entry) : null;
   const expenses = entry?.expenses || {};
   const siteClass = entry?.shift === 'night' ? 'desktop-sheet-site night' : 'desktop-sheet-site';
-  let colIndex = 0;
+  let colIndex = dayLabel === null ? 1 : 0;
   const cell = (content, className = '') => desktopSheetCell(content, rowIndex, colIndex++, className);
+  const dayCell = dayLabel === null ? '' : desktopSheetCell(dayLabel, rowIndex, 0, 'desktop-sheet-day', dayRowspan > 1 ? `rowspan="${dayRowspan}"` : '');
   return `<tr data-sheet-row data-entry-id="${escapeHtml(entry?.id || '')}" data-date="${escapeHtml(date)}">
-    ${cell(dayLabel, 'desktop-sheet-day')}
+    ${dayCell}
     ${cell(desktopSheetInput({ field: 'company', value: entry?.company || '' }))}
     ${cell(desktopSheetInput({ field: 'site', value: entry?.site || '' }), siteClass)}
     ${cell(desktopSheetInput({ field: 'qty', value: entry ? qtyLabel(calc.qty) : '', extra: 'num', type: 'number' }))}
@@ -622,9 +623,8 @@ function renderDesktopSheet() {
   for (let day = 1; day <= days; day += 1) {
     const date = toYmd(new Date(cursor.getFullYear(), cursor.getMonth(), day));
     const entries = dayEntries(date).filter((entry) => entry.type === 'self').sort(sortEntriesForDemen);
-    const hasMixedDayNight = new Set(entries.map((entry) => entry.shift)).size > 1;
     if (!entries.length) rows.push(desktopSheetRow(null, date, day, expenseColumns, rows.length));
-    entries.forEach((entry, index) => rows.push(desktopSheetRow(entry, date, hasMixedDayNight || index === 0 ? day : '', expenseColumns, rows.length)));
+    entries.forEach((entry, index) => rows.push(desktopSheetRow(entry, date, index === 0 ? day : null, expenseColumns, rows.length, entries.length)));
   }
   panel.innerHTML = `<div class="desktop-sheet-head"><div><strong>${cursor.getMonth() + 1}月 出面表</strong><span>出力プレビュー / PC編集可</span></div><button class="desktop-sheet-close" type="button" data-close-sheet-page>カレンダーへ</button></div>
     <div class="desktop-sheet-scroll"><table class="desktop-sheet-table">
@@ -893,19 +893,20 @@ function buildDemenSheet(entries, totals, hidden) {
   const expenseColumns = totals.expenses;
   const days = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
   const expenseHeaders = `${DEMEN_EXPENSE_LABELS.map((label) => `<th>${escapeHtml(label)}</th>`).join('')}<th>金　額</th>`;
-  const demenRow = (day, entry = null) => {
-    if (!entry) return `<tr><td>${day}</td><td class="left"></td><td></td><td class="right"></td><td class="right"></td><td></td><td class="right"></td><td class="right"></td>${expenseColumns.map(() => '<td class="right"></td>').join('')}<td class="right"></td></tr>`;
+  const demenRow = (day, entry = null, dayRowspan = 1) => {
+    const dayCell = day === null ? '' : `<td class="demen-day-cell" ${dayRowspan > 1 ? `rowspan="${dayRowspan}"` : ''}>${day}</td>`;
+    if (!entry) return `<tr>${dayCell}<td class="left"></td><td></td><td class="right"></td><td class="right"></td><td></td><td class="right"></td><td class="right"></td>${expenseColumns.map(() => '<td class="right"></td>').join('')}<td class="right"></td></tr>`;
     const calc = calcEntry(entry);
     const expenses = expenseColumns.map((col) => num(entry.expenses?.[col.item.id]));
     const siteClass = entry.shift === 'night' ? 'left demen-night-site' : 'left';
-    return `<tr class="${entry.shift === 'night' ? 'demen-night-row' : ''}"><td>${day}</td><td class="${siteClass}">${escapeHtml(entry.site || '')}</td><td>${calc.qty || ''}</td><td class="right">${calc.unitRate ? yenPlain(calc.unitRate, hidden) : ''}</td><td class="right">${calc.labor ? yenPlain(calc.labor, hidden) : ''}</td><td>${calc.otHours || ''}</td><td class="right">${calc.otRate ? yenPlain(calc.otRate, hidden) : ''}</td><td class="right">${calc.overtime ? yenPlain(calc.overtime, hidden) : ''}</td>${expenses.map((value) => `<td class="right">${value ? yenPlain(value, hidden) : ''}</td>`).join('')}<td class="right">${calc.subtotal ? yenPlain(calc.subtotal, hidden) : ''}</td></tr>`;
+    return `<tr class="${entry.shift === 'night' ? 'demen-night-row' : ''}">${dayCell}<td class="${siteClass}">${escapeHtml(entry.site || '')}</td><td>${calc.qty || ''}</td><td class="right">${calc.unitRate ? yenPlain(calc.unitRate, hidden) : ''}</td><td class="right">${calc.labor ? yenPlain(calc.labor, hidden) : ''}</td><td>${calc.otHours || ''}</td><td class="right">${calc.otRate ? yenPlain(calc.otRate, hidden) : ''}</td><td class="right">${calc.overtime ? yenPlain(calc.overtime, hidden) : ''}</td>${expenses.map((value) => `<td class="right">${value ? yenPlain(value, hidden) : ''}</td>`).join('')}<td class="right">${calc.subtotal ? yenPlain(calc.subtotal, hidden) : ''}</td></tr>`;
   };
   const bodyRows = Array.from({ length: days }, (_, index) => {
     const day = index + 1;
     const dayItems = entries
       .filter((entry) => Number(entry.date.slice(8, 10)) === day)
       .sort(sortEntriesForDemen);
-    return dayItems.length ? dayItems.map((entry) => demenRow(day, entry)).join('') : demenRow(day);
+    return dayItems.length ? dayItems.map((entry, entryIndex) => demenRow(entryIndex === 0 ? day : null, entry, dayItems.length)).join('') : demenRow(day);
   }).join('');
   return `
     <div class="tbl-wrap demen-sheet-wrap" id="print-demen-wrap">

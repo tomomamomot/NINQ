@@ -161,6 +161,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .demen-sheet th{font-weight:700}.demen-sheet .left{text-align:left}.demen-sheet .right{text-align:right}.demen-sheet tfoot td{font-weight:700}
 .demen-title-row th{border:none!important;height:26px!important;font-size:12px}.demen-title-row .demen-title-main,.demen-title-row .demen-title-name{font-size:16px!important;font-weight:800!important}.demen-company-name{font-size:13px!important;font-weight:700!important}
 .demen-sheet td.demen-night-site,.demen-sheet tr.demen-night-row td.demen-night-site{background:#bdd7ee!important;color:#111!important;font-weight:400}
+.demen-sheet td.demen-day-cell{vertical-align:middle!important;text-align:center}
 .stamp-setting{display:grid;grid-template-columns:1fr 76px 58px;gap:8px;align-items:center;width:100%}
 .stamp-setting .btn-secondary{padding:10px 8px;font-size:13px;min-height:42px}
 .stamp-preview{width:56px;height:56px;object-fit:contain;border:1px solid var(--line);border-radius:10px;background:#fff}
@@ -259,6 +260,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
   .desktop-sheet-title-row th{top:0;z-index:3;height:31px!important;background:#fff!important;font-size:13px;font-weight:900}
   .desktop-sheet-title-row .left,.desktop-sheet-table .left{text-align:left}.desktop-sheet-title-row .right,.desktop-sheet-table .right{text-align:right}
   .desktop-sheet-day{width:34px;text-align:center;font-weight:800;background:#fbfdff!important}
+  .desktop-sheet-day[rowspan]{vertical-align:middle!important}
   .desktop-sheet-input{width:100%;height:29px;border:none;background:transparent;color:#111;padding:4px 6px;font-size:12px;font-weight:700;outline:none}
   .desktop-sheet-site.night,.desktop-sheet-site.night .desktop-sheet-input{background:#beb2e6;color:#111}
   .desktop-sheet-input:focus{background:#eaf2ff;box-shadow:inset 0 0 0 2px #4f8df5}
