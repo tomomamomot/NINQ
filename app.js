@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.30-7';
+const APP_VERSION = 'v2026.05.30-8';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -551,6 +551,36 @@ function desktopSheetColgroup(expenseColumns) {
   const widths = [36, 86, 188, 42, 58, 62, 48, 70, 74, ...expenseColumns.map(() => 64), 86];
   return `<colgroup>${widths.map((width, index) => `<col class="${index === 1 ? 'desktop-sheet-company-col' : ''}" style="width:${width}px">`).join('')}</colgroup>`;
 }
+function desktopSheetTotals(entries, expenseColumns) {
+  const totals = {
+    qty: sumBy(entries, (entry) => calcEntry(entry).qty),
+    labor: sumBy(entries, (entry) => calcEntry(entry).labor),
+    otHours: sumBy(entries, (entry) => calcEntry(entry).otHours),
+    overtime: sumBy(entries, (entry) => calcEntry(entry).overtime),
+    expenses: expenseColumns.map((item) => ({ ...item, total: sumBy(entries, (entry) => num(entry.expenses?.[item.id])) })),
+  };
+  totals.expenseTotal = totals.expenses.reduce((sum, item) => sum + item.total, 0);
+  totals.grandTotal = totals.labor + totals.overtime + totals.expenseTotal;
+  return totals;
+}
+function desktopSheetFooter(totals, expenseColumns) {
+  const expenseTotals = expenseColumns.map((item) => {
+    const total = totals.expenses.find((expense) => expense.id === item.id)?.total || 0;
+    return `<td class="desktop-sheet-total">${total ? yenPlain(total) : ''}</td>`;
+  }).join('');
+  const colCount = 10 + expenseColumns.length;
+  return `<tfoot>
+    <tr class="desktop-sheet-subtotal-row"><td></td><td></td><td class="desktop-sheet-footer-label">小計</td><td>${qtyLabel(totals.qty)}</td><td></td><td class="desktop-sheet-total">${totals.labor ? yenPlain(totals.labor) : ''}</td><td>${totals.otHours || ''}</td><td></td><td class="desktop-sheet-total">${totals.overtime ? yenPlain(totals.overtime) : ''}</td>${expenseTotals}<td class="desktop-sheet-total">${totals.grandTotal ? yenPlain(totals.grandTotal) : ''}</td></tr>
+    <tr class="desktop-sheet-grand-row"><td colspan="${Math.max(1, colCount - 3)}"></td><td class="desktop-sheet-footer-label">合計</td><td colspan="2" class="desktop-sheet-total">${totals.grandTotal ? yenPlain(totals.grandTotal) : ''}</td></tr>
+  </tfoot>`;
+}
+function updateDesktopSheetFooter() {
+  const footer = document.querySelector('#desktop-sheet-panel .desktop-sheet-table tfoot');
+  if (!footer) return;
+  const expenseColumns = desktopSheetExpenseColumns();
+  const sheetEntries = monthEntries().filter((entry) => entry.type === 'self');
+  footer.outerHTML = desktopSheetFooter(desktopSheetTotals(sheetEntries, expenseColumns), expenseColumns);
+}
 function desktopSheetRow(entry, date, dayLabel, expenseColumns, rowIndex) {
   const calc = entry ? calcEntry(entry) : null;
   const expenses = entry?.expenses || {};
@@ -577,6 +607,10 @@ function renderDesktopSheet() {
   sheetSelection = null;
   sheetMouseSelecting = false;
   const expenseColumns = desktopSheetExpenseColumns();
+  const sheetEntries = monthEntries().filter((entry) => entry.type === 'self');
+  const totals = desktopSheetTotals(sheetEntries, expenseColumns);
+  const sheetCompanies = [...new Set(sheetEntries.map((entry) => entry.company).filter(Boolean))];
+  const companyTitle = sheetCompanies.length === 1 ? companyOfficialName(sheetCompanies[0]) : (sheetCompanies.length ? '全会社' : '');
   const days = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
   const rows = [];
   for (let day = 1; day <= days; day += 1) {
@@ -585,11 +619,15 @@ function renderDesktopSheet() {
     if (!entries.length) rows.push(desktopSheetRow(null, date, day, expenseColumns, rows.length));
     entries.forEach((entry, index) => rows.push(desktopSheetRow(entry, date, index === 0 ? day : '', expenseColumns, rows.length)));
   }
-  panel.innerHTML = `<div class="desktop-sheet-head"><div><strong>${cursor.getMonth() + 1}月 出面表</strong><span>PC編集用</span></div><button class="desktop-sheet-close" type="button" data-close-sheet-page>カレンダーへ</button></div>
+  panel.innerHTML = `<div class="desktop-sheet-head"><div><strong>${cursor.getMonth() + 1}月 出面表</strong><span>出力プレビュー / PC編集可</span></div><button class="desktop-sheet-close" type="button" data-close-sheet-page>カレンダーへ</button></div>
     <div class="desktop-sheet-scroll"><table class="desktop-sheet-table">
       ${desktopSheetColgroup(expenseColumns)}
-      <thead><tr><th>日</th><th>会社名</th><th>現場名</th><th>人工</th><th>単価</th><th>人工計</th><th>残業h</th><th>残業単価</th><th>残業計</th>${expenseColumns.map((item) => `<th>${escapeHtml(item.label)}</th>`).join('')}<th>金額</th></tr></thead>
+      <thead>
+        <tr class="desktop-sheet-title-row"><th colspan="3" class="left">${escapeHtml(companyTitle)}</th><th colspan="2">${cursor.getMonth() + 1}</th><th colspan="3" class="left">月 出面表</th><th colspan="${expenseColumns.length}"></th><th class="right">氏名：</th><th>${escapeHtml(state.settings.name || '')}</th></tr>
+        <tr><th>日</th><th>会社名</th><th>現場名</th><th>人工</th><th>単価</th><th>人工計</th><th>残業h</th><th>残業単価</th><th>残業計</th>${expenseColumns.map((item) => `<th>${escapeHtml(item.label)}</th>`).join('')}<th>金額</th></tr>
+      </thead>
       <tbody>${rows.join('')}</tbody>
+      ${desktopSheetFooter(totals, expenseColumns)}
     </table></div>`;
   applySheetZoom();
 }
@@ -2055,6 +2093,7 @@ function saveDesktopSheetRow(row) {
   renderCalendar();
   renderDayEntries();
   renderInvoiceScreen();
+  updateDesktopSheetFooter();
   scheduleDriveAutoSync();
 }
 function bindEvents() {
