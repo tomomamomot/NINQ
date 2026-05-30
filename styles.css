@@ -145,7 +145,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .invoice-sender strong{font-size:14px;font-weight:800}
 .invoice-stamp{position:absolute;right:8px;top:4px;width:72px;height:72px;object-fit:contain;opacity:.92}
 .invoice-amount{display:grid;grid-template-columns:150px minmax(0,220px);align-items:center;width:380px;border-bottom:2px solid #111;margin:18px 0 4px;font-weight:800}
-.invoice-amount span{padding:8px 10px;border-right:1px solid #111}
+.invoice-amount span{padding:8px 10px}
 .invoice-amount strong{padding:8px 12px;text-align:right;font-size:20px}
 .invoice-tax-note{width:380px;text-align:right;font-size:11px;margin-bottom:22px}
 .invoice-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px}
@@ -160,7 +160,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .demen-sheet th,.demen-sheet td{border:1px solid #111!important;background:#fff!important;color:#111!important;padding:4px 5px!important;height:23px;font-weight:400;white-space:nowrap}
 .demen-sheet th{font-weight:700}.demen-sheet .left{text-align:left}.demen-sheet .right{text-align:right}.demen-sheet tfoot td{font-weight:700}
 .demen-title-row th{border:none!important;height:26px!important;font-size:12px}.demen-title-row .demen-title-main,.demen-title-row .demen-title-name{font-size:16px!important;font-weight:800!important}.demen-company-name{font-size:13px!important;font-weight:700!important}
-.demen-sheet td.demen-night-site,.demen-sheet tr.demen-night-row td.demen-night-site{background:#bdd7ee!important;color:#111!important;font-weight:400}
+.demen-sheet td.demen-night-site,.demen-sheet tr.demen-night-row td.demen-night-site{background:#bdd7ee!important;color:#111!important;font-weight:400;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .demen-sheet td.demen-day-cell{vertical-align:middle!important;text-align:center}
 .stamp-setting{display:grid;grid-template-columns:1fr 76px 58px;gap:8px;align-items:center;width:100%}
 .stamp-setting .btn-secondary{padding:10px 8px;font-size:13px;min-height:42px}
@@ -177,7 +177,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .toggle{width:48px;height:28px;border:none;background:#d4dbe6;border-radius:999px;position:relative;flex-shrink:0}.toggle::after{content:'';position:absolute;top:4px;left:4px;width:20px;height:20px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 4px rgba(0,0,0,.15)}.toggle.on{background:var(--accent)}.toggle.on::after{left:24px}
 .empty{text-align:center;padding:48px 20px;color:var(--sub)}.empty .icon{font-size:44px;margin-bottom:10px}.empty p{margin-top:6px;font-size:14px}
 .hidden{display:none!important}
-@media print{@page{size:A4 portrait;margin:10mm}body{background:#fff;max-width:none}.nav,.fab,.month-nav,.topbar,.co-tabs,.mode-switch,.ghost-btn,.btn-row,.btn-primary,.btn-secondary,.btn-gold{display:none!important}.screen{display:none!important;padding:0;min-height:auto}.screen.print-active{display:block!important}.inv-box,.tbl-wrap,.invoice-scroll,.invoice-sheet{box-shadow:none;border:none;margin:0}.invoice-scroll{overflow:visible}.invoice-sheet{width:190mm;min-height:auto;padding:0}.demen-sheet-wrap{padding:0;overflow:visible}.demen-sheet{min-width:0;width:100%;font-size:8.5px}}
+@media print{@page{size:A4 portrait;margin:12mm}html,body{background:#fff;max-width:none;width:100%;margin:0}.nav,.fab,.month-nav,.topbar,.co-tabs,.mode-switch,.ghost-btn,.btn-row,.btn-primary,.btn-secondary,.btn-gold{display:none!important}.screen{display:none!important;padding:0;min-height:auto}.screen.print-active{display:block!important}.inv-box,.tbl-wrap,.invoice-scroll,.invoice-sheet{box-shadow:none;border:none}.invoice-scroll{overflow:visible;margin:0;display:flex;justify-content:center}.invoice-sheet{width:186mm;min-height:auto;padding:0;margin:0 auto;box-sizing:border-box}.demen-sheet-wrap{width:186mm;margin:0 auto;padding:0;overflow:visible;box-sizing:border-box}.demen-sheet{min-width:0;width:100%;font-size:8.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact}.demen-sheet td.demen-night-site,.demen-sheet tr.demen-night-row td.demen-night-site{background:#bdd7ee!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 .topbar-actions{display:flex;align-items:center;gap:8px}
 .sheet-open-btn{padding:8px 11px;font-size:13px}
 .ghost-icon-btn{border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.12);color:#fff;border-radius:12px;padding:9px 12px;font-size:18px;font-weight:800;line-height:1}

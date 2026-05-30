@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.31-3';
+const APP_VERSION = 'v2026.05.31-4';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -837,6 +837,7 @@ function buildInvoiceSheet(entries, totals, hidden) {
   const stamp = s.stampImage ? `<img class="invoice-stamp" src="${s.stampImage}" alt="印鑑">` : '';
   const senderAddress = [s.postalCode ? `〒 ${escapeHtml(s.postalCode)}` : '', s.address ? escapeHtml(s.address) : ''].filter(Boolean).join(' ');
   const expenseRows = totals.expenses.map((item) => `<tr><td></td><td colspan="2" class="left">${escapeHtml(item.label)}</td><td></td><td></td><td></td><td class="right">${item.total ? yenPlain(item.total, hidden) : ''}</td><td></td></tr>`).join('');
+  const blankRows = Array.from({ length: 6 }, () => '<tr class="invoice-blank-row"><td></td><td colspan="2"></td><td></td><td></td><td></td><td></td><td></td></tr>').join('');
   return `
     <div class="invoice-scroll">
       <div class="invoice-sheet" id="print-invoice-box">
@@ -863,6 +864,7 @@ function buildInvoiceSheet(entries, totals, hidden) {
             <tr><td></td><td colspan="2" class="center">諸経費</td><td></td><td></td><td></td><td></td><td></td></tr>
             ${expenseRows}
             <tr><td></td><td colspan="2" class="right">小計</td><td></td><td></td><td></td><td class="right">${yenPlain(totals.expenseTotal, hidden)}</td><td></td></tr>
+            ${blankRows}
             <tr class="invoice-total-row"><td></td><td colspan="4" class="center">合　　計（内税）</td><td></td><td class="right">${yenPlain(totals.total, hidden)}</td><td></td></tr>
           </tbody>
         </table>
