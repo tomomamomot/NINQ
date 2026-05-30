@@ -4,7 +4,7 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.28-2';
+const APP_VERSION = 'v2026.05.30-1';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -460,7 +460,7 @@ function calendarTaskClass(entry, ymd, dayOfWeek) {
   return classes.filter(Boolean).join(' ');
 }
 
-function renderAll() { applyDisplayPreferences(); renderNav(); renderHeaders(); renderCalendar(); renderDayEntries(); renderSubScreen(); renderInvoiceScreen(); renderSettings(); renderSyncScreen(); renderReceiptScreen(); }
+function renderAll() { applyDisplayPreferences(); renderNav(); renderHeaders(); renderCalendar(); renderDayEntries(); renderDesktopSheet(); renderSubScreen(); renderInvoiceScreen(); renderSettings(); renderSyncScreen(); renderReceiptScreen(); }
 function renderNav() {
   if (activeScreen === 'sub' && !subcontractEnabled()) activeScreen = 'cal';
   if (activeScreen !== 'cal') isDayModalOpen = false;
@@ -527,6 +527,51 @@ function renderSummary() {
     <div class="sum-card"><div class="sl">今月の売上</div><div class="sv ${hidden ? 'hidden-amount' : ''}">${yen(monthSalesAmount, hidden)}</div></div>
     <div class="sum-card"><div class="sl">${cursor.getFullYear()}年の人工</div><div class="sv green">${qtyLabel(yearQty)}</div></div>
     <div class="sum-card"><div class="sl">${cursor.getFullYear()}年の売上</div><div class="sv ${hidden ? 'hidden-amount' : ''}">${yen(yearSalesAmount, hidden)}</div></div>`;
+}
+function desktopSheetExpenseColumns() {
+  const map = new Map();
+  expenseItems().forEach((item) => map.set(item.id, item));
+  coreExpenseItems().forEach((item) => { if (!map.has(item.id)) map.set(item.id, item); });
+  return [...map.values()];
+}
+function desktopSheetInput({ field, value = '', id = '', extra = '', type = 'text' }) {
+  return `<input class="desktop-sheet-input ${extra}" type="${type}" data-sheet-field="${field}" value="${escapeHtml(value)}" ${id ? `data-expense-id="${escapeHtml(id)}"` : ''}>`;
+}
+function desktopSheetRow(entry, date, dayLabel, expenseColumns) {
+  const calc = entry ? calcEntry(entry) : null;
+  const expenses = entry?.expenses || {};
+  return `<tr data-sheet-row data-entry-id="${escapeHtml(entry?.id || '')}" data-date="${escapeHtml(date)}">
+    <td class="desktop-sheet-day">${dayLabel}</td>
+    <td>${desktopSheetInput({ field: 'company', value: entry?.company || '' })}</td>
+    <td>${desktopSheetInput({ field: 'site', value: entry?.site || '' })}</td>
+    <td><select class="desktop-sheet-input" data-sheet-field="shift"><option value="day" ${entry?.shift === 'day' ? 'selected' : ''}>日勤</option><option value="night" ${entry?.shift === 'night' ? 'selected' : ''}>夜勤</option><option value="trip" ${entry?.shift === 'trip' ? 'selected' : ''}>出張</option></select></td>
+    <td>${desktopSheetInput({ field: 'qty', value: entry ? qtyLabel(calc.qty) : '', extra: 'num', type: 'number' })}</td>
+    <td>${desktopSheetInput({ field: 'unitRate', value: entry && calc.unitRate ? calc.unitRate : '', extra: 'num', type: 'number' })}</td>
+    <td class="desktop-sheet-total" data-sheet-total="labor">${entry && calc.labor ? yenPlain(calc.labor) : ''}</td>
+    <td>${desktopSheetInput({ field: 'otHours', value: entry && calc.otHours ? calc.otHours : '', extra: 'num', type: 'number' })}</td>
+    <td>${desktopSheetInput({ field: 'otRate', value: entry && calc.otRate ? calc.otRate : '', extra: 'num', type: 'number' })}</td>
+    <td class="desktop-sheet-total" data-sheet-total="overtime">${entry && calc.overtime ? yenPlain(calc.overtime) : ''}</td>
+    ${expenseColumns.map((item) => `<td>${desktopSheetInput({ field: 'expense', id: item.id, value: num(expenses[item.id]) || '', extra: 'num', type: 'number' })}</td>`).join('')}
+    <td class="desktop-sheet-total" data-sheet-total="subtotal">${entry && calc.subtotal ? yenPlain(calc.subtotal) : ''}</td>
+  </tr>`;
+}
+function renderDesktopSheet() {
+  const panel = document.getElementById('desktop-sheet-panel');
+  if (!panel) return;
+  const expenseColumns = desktopSheetExpenseColumns();
+  const days = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
+  const rows = [];
+  for (let day = 1; day <= days; day += 1) {
+    const date = toYmd(new Date(cursor.getFullYear(), cursor.getMonth(), day));
+    const entries = dayEntries(date).filter((entry) => entry.type === 'self');
+    if (!entries.length) rows.push(desktopSheetRow(null, date, day, expenseColumns));
+    entries.forEach((entry, index) => rows.push(desktopSheetRow(entry, date, index === 0 ? day : '', expenseColumns)));
+  }
+  panel.innerHTML = `<div class="desktop-sheet-head"><div><strong>${cursor.getMonth() + 1}月 出面表</strong><span>PC編集用</span></div></div>
+    <div class="desktop-sheet-scroll"><table class="desktop-sheet-table">
+      <thead><tr><th>日</th><th>会社名</th><th>現場名</th><th>区分</th><th>人工</th><th>単価</th><th>人工計</th><th>残業h</th><th>残業単価</th><th>残業計</th>${expenseColumns.map((item) => `<th>${escapeHtml(item.label)}</th>`).join('')}<th>金額</th></tr></thead>
+      <tbody>${rows.join('')}</tbody>
+    </table></div>`;
 }
 function renderDayEntries() {
   const legacy = document.getElementById('day-entries');
@@ -1817,6 +1862,61 @@ function printView(kind) {
   window.print();
   document.getElementById('print-demen-wrap')?.classList.remove('hidden'); document.getElementById('print-invoice-box')?.classList.remove('hidden'); screen.classList.remove('print-active');
 }
+function desktopSheetEntryFromRow(row, existing = null) {
+  const value = (field) => row.querySelector(`[data-sheet-field="${field}"]`)?.value?.trim() || '';
+  const expenses = {};
+  row.querySelectorAll('[data-sheet-field="expense"]').forEach((input) => { expenses[input.dataset.expenseId] = num(input.value); });
+  const hasText = value('company') || value('site');
+  const hasNumbers = ['qty', 'unitRate', 'otHours', 'otRate'].some((field) => num(value(field))) || Object.values(expenses).some((amount) => num(amount));
+  if (!existing && !hasText && !hasNumbers) return null;
+  const now = new Date().toISOString();
+  return normalizeEntry({
+    ...(existing || {}),
+    id: existing?.id || crypto.randomUUID(),
+    date: row.dataset.date,
+    type: 'self',
+    shift: value('shift') || existing?.shift || 'day',
+    company: value('company'),
+    site: value('site'),
+    qty: value('qty') === '' && !existing ? 1 : qtyValue(value('qty')),
+    unitRate: num(value('unitRate')),
+    otHours: num(value('otHours')),
+    otRate: num(value('otRate')),
+    expenses,
+    invoiceMode: existing?.invoiceMode || 'with',
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  });
+}
+function calcDesktopSheetRow(row) {
+  const entry = desktopSheetEntryFromRow(row, { id: 'preview', date: row.dataset.date, createdAt: new Date().toISOString() });
+  if (!entry) return { labor: 0, overtime: 0, subtotal: 0 };
+  return calcEntry(entry);
+}
+function updateDesktopSheetRowTotals(row) {
+  const calc = calcDesktopSheetRow(row);
+  const set = (key, value) => { const el = row.querySelector(`[data-sheet-total="${key}"]`); if (el) el.textContent = value ? yenPlain(value) : ''; };
+  set('labor', calc.labor);
+  set('overtime', calc.overtime);
+  set('subtotal', calc.subtotal);
+}
+function saveDesktopSheetRow(row) {
+  const existing = row.dataset.entryId ? state.entries.find((entry) => entry.id === row.dataset.entryId) : null;
+  const entry = desktopSheetEntryFromRow(row, existing);
+  if (!entry) { updateDesktopSheetRowTotals(row); return; }
+  state.entries = state.entries.filter((item) => item.id !== entry.id);
+  state.entries.push(entry);
+  if (state.deletedEntryIds) delete state.deletedEntryIds[entry.id];
+  selectedDate = entry.date;
+  cursor = startOfMonth(fromYmd(entry.date));
+  saveState();
+  row.dataset.entryId = entry.id;
+  updateDesktopSheetRowTotals(row);
+  renderCalendar();
+  renderDayEntries();
+  renderInvoiceScreen();
+  scheduleDriveAutoSync();
+}
 function bindEvents() {
   document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => { if (activeScreen === 'st') flushSettingsAutosave(); activeScreen = button.dataset.screen; renderAll(); }));
   const salesToggle = document.getElementById('toggle-sales-btn');
@@ -1905,6 +2005,8 @@ function bindEvents() {
   });
 
   document.addEventListener('change', (event) => {
+    const sheetInput = event.target.closest('[data-sheet-field]');
+    if (sheetInput) { saveDesktopSheetRow(sheetInput.closest('[data-sheet-row]')); return; }
     if (event.target.id === 'f-date' || event.target.id === 'f-end-date') { renderRangeExclusions(); return; }
     if (event.target.id === 'google-export-start' || event.target.id === 'google-export-end') { renderSyncScreen(); return; }
     if (event.target.matches('#st-tax')) { scheduleSettingsAutosave({ immediate: true, section: 'invoice' }); return; }
@@ -1921,6 +2023,8 @@ function bindEvents() {
   });
 
   document.addEventListener('input', (event) => {
+    const sheetInput = event.target.closest('[data-sheet-field]');
+    if (sheetInput) { updateDesktopSheetRowTotals(sheetInput.closest('[data-sheet-row]')); return; }
     if (event.target.matches('#st-name,#st-postal,#st-addr,#st-tel,#st-co')) scheduleSettingsAutosave({ section: 'profile' });
     if (event.target.matches('#st-bank,#st-branch,#st-accno,#st-accname')) scheduleSettingsAutosave({ section: 'bank' });
     if (event.target.matches('#st-invno')) scheduleSettingsAutosave({ section: 'invoice' });
