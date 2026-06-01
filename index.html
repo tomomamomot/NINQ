@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json?v=35">
 <link rel="icon" href="icon-192.png?v=34">
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=34">
-<link rel="stylesheet" href="styles.css?v=54">
+<link rel="stylesheet" href="styles.css?v=55">
 </head>
 <body>
 <div id="sc-cal" class="screen active">
@@ -29,7 +29,7 @@
     <div class="top-menu hidden" id="top-menu">
       <button class="top-menu-item" data-screen-link="cal">カレンダー</button>
       <button class="top-menu-item" data-screen-link="sub">外注</button>
-      <button class="top-menu-item" data-screen-link="inv">請求</button>
+      <button class="top-menu-item" data-screen-link="inv">請求書、出面表</button>
       <button class="top-menu-item" data-screen-link="sync">Google同期</button>
       <button class="top-menu-item" data-screen-link="receipt">領収書</button>
       <button class="top-menu-item" data-screen-link="st">設定</button>
@@ -169,6 +169,7 @@
     <div class="st-row"><span class="st-label">インボイス表示</span><button class="toggle on" id="tgl-inv"></button></div>
     <div class="st-row" id="inv-no-row"><span class="st-label">登録番号</span><input class="st-input" id="st-invno" placeholder="T0000000000000"></div>
     <div class="st-row"><span class="st-label">消費税率</span><select class="st-select" id="st-tax"><option value="10">10%</option><option value="8">8%</option><option value="0">0%</option></select></div>
+    <div class="st-row"><span class="st-label">請求書フォント</span><select class="st-select" id="st-invoice-font-size"><option value="normal">標準</option><option value="large">大きめ</option><option value="xlarge">特大</option></select></div>
     <div class="st-row"><span class="st-label">印鑑</span><div class="stamp-setting"><input id="st-stamp-file" type="file" accept="image/*" hidden><button class="btn-secondary" type="button" id="stamp-pick-btn">印鑑画像を登録</button><button class="btn-secondary" type="button" id="stamp-clear-btn">削除</button><img id="stamp-preview" class="stamp-preview hidden" alt="印鑑プレビュー"></div></div>
   </div>
 
@@ -289,7 +290,7 @@
 <nav class="nav hidden">
   <button class="nav-item active" data-screen="cal">カレンダー</button>
   <button class="nav-item" data-screen="sub">外注</button>
-  <button class="nav-item" data-screen="inv">請求</button>
+  <button class="nav-item" data-screen="inv">請求書、出面表</button>
   <button class="nav-item" data-screen="sync">Google同期</button>
   <button class="nav-item" data-screen="receipt">領収書</button>
   <button class="nav-item" data-screen="st">設定</button>
@@ -312,7 +313,7 @@
   </div>
 </div>
 
-<script src="app.js?v=76"></script>
+<script src="app.js?v=77"></script>
 <script src="settings-polish.js?v=1"></script>
 </body>
 </html>

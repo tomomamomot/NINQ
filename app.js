@@ -5,12 +5,12 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.02-1';
+const APP_VERSION = 'v2026.06.02-2';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
-  invoiceNo: '', invoiceEnabled: true, taxRate: 10, stampImage: '',
+  invoiceNo: '', invoiceEnabled: true, taxRate: 10, stampImage: '', invoiceFontSize: 'normal',
   defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0,
   companies: [], companyRates: [], expenseItems: DEFAULT_EXPENSE_ITEMS.map((label, index) => ({ id: `exp${index + 1}`, label })),
   companyInvoiceModes: {}, showSales: true, showSubcontract: true, uiSize: 'normal', fontChoice: 'system', googleClientId: '', googleCalendarId: 'primary', googleStoreMode: 'local', googleAccountEmail: '', googleSyncEnabled: false, googleConflictMode: 'newer',
@@ -20,7 +20,7 @@ const DEFAULT_STATE = { entries: [], receipts: [], deletedEntryIds: {}, settings
 const SETTINGS_SECTIONS = {
   profile: ['name', 'postalCode', 'address', 'tel', 'companyName'],
   bank: ['bank', 'branch', 'accountNo', 'accountName'],
-  invoice: ['invoiceNo', 'invoiceEnabled', 'taxRate', 'stampImage', 'companyInvoiceModes'],
+  invoice: ['invoiceNo', 'invoiceEnabled', 'taxRate', 'stampImage', 'companyInvoiceModes', 'invoiceFontSize'],
   companies: ['companies', 'companyRates'],
   expenses: ['expenseItems'],
   display: ['showSales', 'showSubcontract', 'salesTotalParts', 'uiSize', 'fontChoice'],
@@ -78,6 +78,7 @@ function normalizeState(source) {
   settings.salesTotalParts = { ...DEFAULT_SETTINGS.salesTotalParts, ...(settings.salesTotalParts || {}) };
   if (!['normal', 'large', 'xlarge'].includes(settings.uiSize)) settings.uiSize = DEFAULT_SETTINGS.uiSize;
   if (!['system', 'meiryo', 'gothic', 'rounded'].includes(settings.fontChoice)) settings.fontChoice = DEFAULT_SETTINGS.fontChoice;
+  if (!['normal', 'large', 'xlarge'].includes(settings.invoiceFontSize)) settings.invoiceFontSize = DEFAULT_SETTINGS.invoiceFontSize;
   if (!['newer', 'confirm'].includes(settings.googleConflictMode)) settings.googleConflictMode = DEFAULT_SETTINGS.googleConflictMode;
   settings.settingUpdatedAt = settings.settingUpdatedAt && typeof settings.settingUpdatedAt === 'object' ? settings.settingUpdatedAt : {};
   const entries = Array.isArray(source.entries) ? source.entries.map(normalizeEntry) : [];
@@ -448,10 +449,11 @@ function calcEntry(entry) {
   const labor = qty * unitRate, overtime = otHours * otRate;
   const expenses = expenseItems().reduce((sum, item) => sum + num(entry.expenses?.[item.id]), 0);
   const subtotal = labor + overtime + expenses;
+  const subcontractSales = labor + overtime;
   const paymentAmount = entry.type === 'sub' ? num(entry.paymentAmount) : 0;
-  const subcontractPay = entry.type === 'sub' ? (paymentAmount || subtotal) : 0;
-  const subcontractDiff = entry.type === 'sub' ? subtotal - subcontractPay : 0;
-  return { qty, unitRate, otHours, otRate, labor, overtime, expenses, subtotal, paymentAmount, subcontractPay, subcontractDiff };
+  const subcontractPay = entry.type === 'sub' ? (paymentAmount || subcontractSales) : 0;
+  const subcontractDiff = entry.type === 'sub' ? subcontractSales - subcontractPay : 0;
+  return { qty, unitRate, otHours, otRate, labor, overtime, expenses, subtotal, subcontractSales, paymentAmount, subcontractPay, subcontractDiff };
 }
 function salesTotalForEntry(entry) {
   const parts = { ...DEFAULT_SETTINGS.salesTotalParts, ...(state.settings.salesTotalParts || {}) };
@@ -504,7 +506,7 @@ function syncMenuClones() {
   const template = `
     <button class="top-menu-item" data-screen-link="cal">カレンダー</button>
     ${subItem}
-    <button class="top-menu-item" data-screen-link="inv">請求</button>
+    <button class="top-menu-item" data-screen-link="inv">請求書、出面表</button>
     <button class="top-menu-item" data-screen-link="sync">Google同期</button>
     <button class="top-menu-item" data-screen-link="receipt">領収書</button>
     <button class="top-menu-item" data-screen-link="st">設定</button>
@@ -820,7 +822,7 @@ function renderSubScreen() {
   const totalPay = people.reduce((sum, [, info]) => sum + info.pay, 0);
   const totalDiff = people.reduce((sum, [, info]) => sum + info.diff, 0);
   const totalDays = people.reduce((sum, [, info]) => sum + info.days, 0);
-  body.innerHTML = `<div class="sub-total-grid"><div class="sub-stat"><div class="k">外注人数</div><div class="v">${people.length}人</div></div><div class="sub-stat"><div class="k">支払合計</div><div class="v ${hidden ? 'hidden-amount' : ''}">${yen(totalPay, hidden)}</div></div><div class="sub-stat"><div class="k">差額合計</div><div class="v ${hidden ? 'hidden-amount' : ''}">${yen(totalDiff, hidden)}</div></div><div class="sub-stat"><div class="k">人工合計</div><div class="v">${qtyLabel(totalDays)}</div></div></div><div class="btn-row" style="padding:0 16px 10px"><button class="btn-primary" data-export-sub-payments>支払いCSV出力</button></div>${people.map(([name, info]) => `<div class="sub-card"><div class="sub-card-hd"><div><div class="sub-card-name">${escapeHtml(name)}</div><div class="sub-card-sub">${[...info.companies].join(' / ') || '会社未入力'}</div></div><div><div class="sub-card-amt ${hidden ? 'hidden-amount' : ''}">${yen(info.pay, hidden)}</div><div class="sub-card-meta">${qtyLabel(info.days)}人工 / 差額 ${yen(info.diff, hidden)}</div></div></div><div class="sub-card-foot">${info.entries.slice(0, 4).map((entry) => { const calc = calcEntry(entry); return `<span class="etag">${fmtDateJP(entry.date)} ${escapeHtml(entry.site || '現場')} 支払 ${yen(calc.subcontractPay, hidden)}</span>`; }).join('')}</div></div>`).join('')}`;
+  body.innerHTML = `<div class="sub-total-grid"><div class="sub-stat"><div class="k">外注人数</div><div class="v">${people.length}人</div></div><div class="sub-stat"><div class="k">支払合計</div><div class="v ${hidden ? 'hidden-amount' : ''}">${yen(totalPay, hidden)}</div></div><div class="sub-stat"><div class="k">差額合計</div><div class="v ${hidden ? 'hidden-amount' : ''}">${yen(totalDiff, hidden)}</div></div><div class="sub-stat"><div class="k">人工合計</div><div class="v">${qtyLabel(totalDays)}</div></div></div><div class="btn-row" style="padding:0 16px 10px"><button class="btn-primary" data-export-sub-payments>支払いCSV出力</button></div>${people.map(([name, info]) => `<div class="sub-card"><div class="sub-card-hd"><div><div class="sub-card-name">${escapeHtml(name)}</div><div class="sub-card-sub">${[...info.companies].join(' / ') || '会社未入力'}</div></div><div><div class="sub-card-amt ${hidden ? 'hidden-amount' : ''}">${yen(info.pay, hidden)}</div><div class="sub-card-meta">${qtyLabel(info.days)}人工 / 差額 ${yen(info.diff, hidden)}</div></div></div><div class="sub-card-foot">${info.entries.map((entry) => { const calc = calcEntry(entry); return `<span class="etag">${fmtDateJP(entry.date)} ${escapeHtml(entry.site || '現場')} 支払 ${yen(calc.subcontractPay, hidden)}</span>`; }).join('')}</div></div>`).join('')}`;
 }
 const DEMEN_EXPENSE_LABELS = ['交通費', '駐車場代', '宿泊代', 'ガソリン代', '資材等', '他諸経費'];
 function invoiceDateLabel() {
@@ -845,6 +847,7 @@ function invoiceTotals(entries) {
 }
 function buildInvoiceSheet(entries, totals, hidden) {
   const s = state.settings;
+  const invoiceFontSize = ['normal', 'large', 'xlarge'].includes(s.invoiceFontSize) ? s.invoiceFontSize : DEFAULT_SETTINGS.invoiceFontSize;
   const invoiceCompany = companyOfficialName(selectedCompany);
   const otRate = entries.find((entry) => calcEntry(entry).otRate)?.otRate || 0;
   const stamp = s.stampImage ? `<img class="invoice-stamp" src="${s.stampImage}" alt="印鑑">` : '';
@@ -863,7 +866,7 @@ function buildInvoiceSheet(entries, totals, hidden) {
   const blankRows = Array.from({ length: 6 }, () => '<tr class="invoice-blank-row"><td></td><td colspan="2"></td><td></td><td></td><td></td><td></td><td></td></tr>').join('');
   return `
     <div class="invoice-scroll">
-      <div class="invoice-sheet" id="print-invoice-box">
+      <div class="invoice-sheet invoice-size-${invoiceFontSize}" id="print-invoice-box">
         <div class="invoice-title">御　請　求　書</div>
         <div class="invoice-date">${invoiceDateLabel()}</div>
         <div class="invoice-to"><span>${escapeHtml(invoiceCompany)}</span><b>御中</b></div>
@@ -1025,6 +1028,7 @@ function renderSettings() {
   document.getElementById('tgl-sales-expenses')?.classList.toggle('on', !!salesParts.expenses);
   const uiSize = document.getElementById('st-ui-size'); if (uiSize) uiSize.value = s.uiSize || DEFAULT_SETTINGS.uiSize;
   const fontChoice = document.getElementById('st-font-choice'); if (fontChoice) fontChoice.value = s.fontChoice || DEFAULT_SETTINGS.fontChoice;
+  const invoiceFontSize = document.getElementById('st-invoice-font-size'); if (invoiceFontSize) invoiceFontSize.value = s.invoiceFontSize || DEFAULT_SETTINGS.invoiceFontSize;
   document.getElementById('inv-no-row').classList.toggle('hidden', !s.invoiceEnabled);
   const stampPreview = document.getElementById('stamp-preview');
   if (stampPreview) {
@@ -1118,8 +1122,7 @@ function currentFormSubtotal() {
   const unitRate = num(document.getElementById('f-rate')?.value);
   const otHours = num(document.getElementById('f-ot-hours')?.value);
   const otRate = num(document.getElementById('f-ot-rate')?.value);
-  const expenses = [...document.querySelectorAll('[data-expense-id]')].reduce((sum, input) => sum + num(input.value), 0);
-  return qty * unitRate + otHours * otRate + expenses;
+  return qty * unitRate + otHours * otRate;
 }
 function updateSubcontractDiff() {
   const wrap = document.getElementById('sub-pay-wrap');
@@ -2029,7 +2032,7 @@ function persistSettingsFromForm({ render = false, feedback = '', sections = [] 
     overtime: document.getElementById('tgl-sales-overtime')?.classList.contains('on') !== false,
     expenses: document.getElementById('tgl-sales-expenses')?.classList.contains('on') === true,
   };
-  state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, uiSize: document.getElementById('st-ui-size')?.value || DEFAULT_SETTINGS.uiSize, fontChoice: document.getElementById('st-font-choice')?.value || DEFAULT_SETTINGS.fontChoice, salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: linesToObjects(document.getElementById('st-expenses').value, expenseItems()) };
+  state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, uiSize: document.getElementById('st-ui-size')?.value || DEFAULT_SETTINGS.uiSize, fontChoice: document.getElementById('st-font-choice')?.value || DEFAULT_SETTINGS.fontChoice, invoiceFontSize: document.getElementById('st-invoice-font-size')?.value || DEFAULT_SETTINGS.invoiceFontSize, salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: linesToObjects(document.getElementById('st-expenses').value, expenseItems()) };
   markSettingsSections(sections.length ? sections : Object.keys(SETTINGS_SECTIONS).filter((section) => section !== 'google'));
   state.entries = state.entries.map((entry) => { const nextExpenses = {}; expenseItems().forEach((item) => { nextExpenses[item.id] = num(entry.expenses?.[item.id]); }); return { ...entry, expenses: nextExpenses }; });
   applyDisplayPreferences();
@@ -2366,7 +2369,7 @@ function bindEvents() {
     if (sheetInput) { saveDesktopSheetRow(sheetInput.closest('[data-sheet-row]')); return; }
     if (event.target.id === 'f-date' || event.target.id === 'f-end-date') { renderRangeExclusions(); return; }
     if (event.target.id === 'google-export-start' || event.target.id === 'google-export-end') { renderSyncScreen(); return; }
-    if (event.target.matches('#st-tax')) { scheduleSettingsAutosave({ immediate: true, section: 'invoice' }); return; }
+    if (event.target.matches('#st-tax,#st-invoice-font-size')) { scheduleSettingsAutosave({ immediate: true, section: 'invoice' }); return; }
     if (event.target.matches('#st-ui-size,#st-font-choice')) { scheduleSettingsAutosave({ immediate: true, section: 'display' }); return; }
     if (event.target.matches('[data-range-exclude]')) { event.target.closest('.range-exclude-chip')?.classList.toggle('checked', event.target.checked); return; }
     if (event.target.id === 'f-company-select') { const input = document.getElementById('f-company'); if (input && event.target.value) { input.value = event.target.value; applyCompanyRate(event.target.value); updateSubcontractDiff(); } return; }

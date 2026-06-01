@@ -136,6 +136,11 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .invoice-actions{position:sticky;top:0;z-index:12;background:linear-gradient(180deg,var(--bg) 74%,rgba(238,243,248,0));padding-top:10px!important}
 .invoice-scroll{overflow:auto;margin:0 16px 14px}
 .invoice-sheet{position:relative;width:760px;min-height:980px;padding:28px 34px 34px;background:#fff;border:1px solid #111;color:#111;font-family:'Yu Gothic UI','Yu Gothic',Meiryo,sans-serif;font-size:12px;line-height:1.35;box-shadow:var(--shadow);overflow:hidden}
+.invoice-sheet.invoice-size-large{font-size:13px}.invoice-sheet.invoice-size-xlarge{font-size:14px}
+.invoice-sheet.invoice-size-large .invoice-table{font-size:12px}.invoice-sheet.invoice-size-xlarge .invoice-table{font-size:13px}
+.invoice-sheet.invoice-size-large .invoice-title{font-size:23px}.invoice-sheet.invoice-size-xlarge .invoice-title{font-size:24px}
+.invoice-sheet.invoice-size-large .invoice-to{font-size:19px}.invoice-sheet.invoice-size-xlarge .invoice-to{font-size:20px}
+.invoice-sheet.invoice-size-large .invoice-amount strong{font-size:21px}.invoice-sheet.invoice-size-xlarge .invoice-amount strong{font-size:22px}
 .invoice-title{text-align:center;font-size:22px;font-weight:800;letter-spacing:.26em;padding-left:.26em;margin-bottom:18px}
 .invoice-date{text-align:right;margin-bottom:14px}
 .invoice-to{display:flex;align-items:flex-end;gap:18px;width:45%;border-bottom:1px solid #111;font-size:18px;font-weight:700;padding:0 4px 4px;margin-bottom:12px}
