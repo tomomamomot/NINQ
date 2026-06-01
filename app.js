@@ -1,10 +1,11 @@
 
 const STORE_KEY = 'ninq-v2';
 const SYNC_META_KEY = 'ninq-sync-meta-v1';
+const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.05.31-7';
+const APP_VERSION = 'v2026.06.02-1';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -12,7 +13,7 @@ const DEFAULT_SETTINGS = {
   invoiceNo: '', invoiceEnabled: true, taxRate: 10, stampImage: '',
   defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0,
   companies: [], companyRates: [], expenseItems: DEFAULT_EXPENSE_ITEMS.map((label, index) => ({ id: `exp${index + 1}`, label })),
-  companyInvoiceModes: {}, showSales: true, showSubcontract: true, uiSize: 'normal', fontChoice: 'system', googleClientId: '', googleCalendarId: 'primary', googleStoreMode: 'local', googleAccountEmail: '', googleSyncEnabled: false,
+  companyInvoiceModes: {}, showSales: true, showSubcontract: true, uiSize: 'normal', fontChoice: 'system', googleClientId: '', googleCalendarId: 'primary', googleStoreMode: 'local', googleAccountEmail: '', googleSyncEnabled: false, googleConflictMode: 'newer',
   salesTotalParts: { labor: true, overtime: true, expenses: false }, settingUpdatedAt: {},
 };
 const DEFAULT_STATE = { entries: [], receipts: [], deletedEntryIds: {}, settings: DEFAULT_SETTINGS };
@@ -23,7 +24,7 @@ const SETTINGS_SECTIONS = {
   companies: ['companies', 'companyRates'],
   expenses: ['expenseItems'],
   display: ['showSales', 'showSubcontract', 'salesTotalParts', 'uiSize', 'fontChoice'],
-  google: ['googleClientId', 'googleCalendarId', 'googleStoreMode', 'googleAccountEmail', 'googleSyncEnabled'],
+  google: ['googleClientId', 'googleCalendarId', 'googleStoreMode', 'googleAccountEmail', 'googleSyncEnabled', 'googleConflictMode'],
 };
 
 let state = loadState();
@@ -77,6 +78,7 @@ function normalizeState(source) {
   settings.salesTotalParts = { ...DEFAULT_SETTINGS.salesTotalParts, ...(settings.salesTotalParts || {}) };
   if (!['normal', 'large', 'xlarge'].includes(settings.uiSize)) settings.uiSize = DEFAULT_SETTINGS.uiSize;
   if (!['system', 'meiryo', 'gothic', 'rounded'].includes(settings.fontChoice)) settings.fontChoice = DEFAULT_SETTINGS.fontChoice;
+  if (!['newer', 'confirm'].includes(settings.googleConflictMode)) settings.googleConflictMode = DEFAULT_SETTINGS.googleConflictMode;
   settings.settingUpdatedAt = settings.settingUpdatedAt && typeof settings.settingUpdatedAt === 'object' ? settings.settingUpdatedAt : {};
   const entries = Array.isArray(source.entries) ? source.entries.map(normalizeEntry) : [];
   const receipts = Array.isArray(source.receipts) ? source.receipts.map(normalizeReceipt) : [];
@@ -161,6 +163,16 @@ function loadSyncMeta() {
   }
 }
 function saveSyncMeta(meta) { localStorage.setItem(SYNC_META_KEY, JSON.stringify({ ...loadSyncMeta(), ...meta })); }
+function loadSyncPending() {
+  try {
+    return { pending: false, reason: '', at: '', ...(JSON.parse(localStorage.getItem(SYNC_PENDING_KEY) || '{}')) };
+  } catch (error) {
+    return { pending: false, reason: '', at: '' };
+  }
+}
+function saveSyncPending(pending, reason = '') {
+  localStorage.setItem(SYNC_PENDING_KEY, JSON.stringify({ pending: !!pending, reason, at: pending ? new Date().toISOString() : '' }));
+}
 function dateTime(value) { return Date.parse(value || '') || 0; }
 function isAfterDate(a, b) { return dateTime(a) > dateTime(b); }
 function num(value) { const n = Number(value); return Number.isFinite(n) ? n : 0; }
@@ -957,6 +969,14 @@ function renderExpenseRows(title, rows) {
   if (!rows.length) return `<div class="expense-group"><div class="expense-group-title">${escapeHtml(title)}</div><div class="expense-empty">経費入力なし</div></div>`;
   return `<div class="expense-group"><div class="expense-group-title">${escapeHtml(title)}</div>${rows.map((row) => `<div class="expense-row"><span>${escapeHtml(row.label)}</span><strong>${yen(row.total, !state.settings.showSales)}</strong></div>`).join('')}</div>`;
 }
+function syncStatusText() {
+  const pending = loadSyncPending();
+  if (!navigator.onLine) return pending.pending ? 'オフライン・未送信あり' : 'オフライン';
+  if (driveSyncInFlight) return '同期中';
+  if (googleAccessToken) return state.settings.googleSyncEnabled ? '自動同期ON' : 'ログイン済み';
+  if (state.settings.googleClientId) return state.settings.googleSyncEnabled ? '自動同期ON・再ログイン待ち' : '設定済み';
+  return '未設定';
+}
 function renderSyncScreen() {
   const month = monthEntries();
   const sub = document.getElementById('sync-sub'); if (sub) sub.textContent = '出力と引き継ぎ';
@@ -968,8 +988,11 @@ function renderSyncScreen() {
   const calendarCount = document.getElementById('calendar-export-count'); if (calendarCount) calendarCount.textContent = `${calendarExportGroups(rangeEntries).length}件`;
   const backupStatus = document.getElementById('backup-status'); if (backupStatus) backupStatus.textContent = `${state.entries.length}予定`;
   const clientInput = document.getElementById('google-client-id'); if (clientInput && !clientInput.value) clientInput.value = state.settings.googleClientId || '';
-  const driveStatus = document.getElementById('drive-sync-status'); if (driveStatus) driveStatus.textContent = googleAccessToken ? 'ログイン済み' : (state.settings.googleClientId ? '設定済み' : '未設定');
-  const log = document.getElementById('sync-log'); if (log && !log.textContent) log.textContent = 'PCで変更したら「この端末から送る」。スマホで開いたら「クラウドから受け取る」。スマホで変更した時は逆に使います';
+  const autoSync = document.getElementById('google-auto-sync'); if (autoSync) autoSync.checked = !!state.settings.googleSyncEnabled;
+  const conflictMode = document.getElementById('google-conflict-mode'); if (conflictMode) conflictMode.value = state.settings.googleConflictMode || 'newer';
+  const driveStatus = document.getElementById('drive-sync-status'); if (driveStatus) driveStatus.textContent = syncStatusText();
+  const pending = loadSyncPending();
+  const log = document.getElementById('sync-log'); if (log && !log.textContent) log.textContent = pending.pending ? '未送信の変更があります。オンライン復帰後に自動送信します' : '初回だけGoogleログインすると、以後は起動時取得・保存時送信を自動で試します';
 }
 function renderReceiptScreen() {
   const sub = document.getElementById('receipt-sub'); if (sub) sub.textContent = `${state.receipts?.length || 0}件`;
@@ -1229,16 +1252,31 @@ function saveGoogleSettings({ feedback = true, render = true, touch = true } = {
   state.settings.googleClientId = document.getElementById('google-client-id')?.value.trim() || '';
   state.settings.googleCalendarId = document.getElementById('google-calendar-id')?.value.trim() || 'primary';
   state.settings.googleStoreMode = document.getElementById('google-store-mode')?.value || 'local';
+  state.settings.googleSyncEnabled = !!document.getElementById('google-auto-sync')?.checked;
+  state.settings.googleConflictMode = document.getElementById('google-conflict-mode')?.value || 'newer';
   if (touch) markSettingsSections('google');
   saveState();
   if (render) renderAll();
   if (feedback) setSyncLog('Google設定を保存しました');
 }
 function setSyncLog(message) { const log = document.getElementById('sync-log'); if (log) log.textContent = message; }
-function scheduleDriveAutoSync() {
+function scheduleDriveAutoSync({ delay = 1200, message = '', reason = 'save' } = {}) {
   window.clearTimeout(driveSyncTimer);
   driveSyncTimer = null;
-  if (state.settings.googleClientId) setSyncLog('端末内に保存しました。別端末で使う時は「この端末から送る」を押してください');
+  if (!state.settings.googleSyncEnabled || !state.settings.googleClientId) {
+    if (state.settings.googleClientId) setSyncLog('端末内に保存しました。自動同期をONにするとクラウドにも保存します');
+    return;
+  }
+  if (!navigator.onLine) {
+    saveSyncPending(true, reason);
+    setSyncLog('オフラインのため端末に一時保存しました。オンライン復帰後に自動送信します');
+    renderSyncScreen();
+    return;
+  }
+  saveSyncPending(true, reason);
+  if (message) setSyncLog(message);
+  else setSyncLog('端末内に保存しました。クラウドへ自動保存します...');
+  driveSyncTimer = window.setTimeout(() => syncGoogleDrive({ auto: true, reason }), delay);
 }
 function localModifiedAt(targetState = state) {
   const dates = [
@@ -1404,11 +1442,56 @@ function mergeDriveState(remotePayload) {
     deletedEntryIds,
   });
 }
+function applyRemoteDriveState(remotePayload) {
+  state = normalizeState(remotePayload.state || remotePayload);
+  saveState();
+  rememberDriveSync(remotePayload);
+  saveSyncPending(false);
+  renderAll();
+}
+async function pushDriveStateToFile(fileId = '') {
+  const payload = syncPayload();
+  if (fileId) await updateDriveSyncFile(fileId, JSON.stringify(payload, null, 2));
+  else await pushLocalDriveState();
+  rememberDriveSync(payload);
+  saveSyncPending(false);
+  return payload;
+}
+async function resolveDriveConflict(file, remotePayload, { auto = false } = {}) {
+  const remoteModifiedAt = remotePayloadModifiedAt(remotePayload);
+  const localTime = dateTime(localModifiedAt());
+  const remoteTime = dateTime(remoteModifiedAt);
+  const useConfirm = state.settings.googleConflictMode === 'confirm' && !auto;
+  if (useConfirm) {
+    const keepLocal = confirm('PC/スマホの両方に変更があります。この端末の内容をクラウドへ保存しますか？\n\nOK: この端末を採用\nキャンセル: クラウドを採用');
+    if (keepLocal) {
+      await pushDriveStateToFile(file.id);
+      setSyncLog(`この端末のデータを採用して保存しました。予定 ${state.entries.length}件`);
+      return;
+    }
+    applyRemoteDriveState(remotePayload);
+    setSyncLog(`クラウドのデータを採用しました。予定 ${state.entries.length}件`);
+    return;
+  }
+  if (remoteTime > localTime) {
+    applyRemoteDriveState(remotePayload);
+    setSyncLog(`${auto ? '競合があったため新しいクラウド側を採用しました。' : '新しいクラウド側を採用しました。'}予定 ${state.entries.length}件`);
+    return;
+  }
+  await pushDriveStateToFile(file.id);
+  setSyncLog(`${auto ? '競合があったため新しい端末側を保存しました。' : '新しい端末側を保存しました。'}予定 ${state.entries.length}件`);
+}
 async function loginGoogleDrive() {
   try {
     saveGoogleSettings({ feedback: false, render: false, touch: false });
     await getDriveToken('consent');
-    setSyncLog('Googleログインしました。送る/受け取るが使えます');
+    state.settings.googleSyncEnabled = true;
+    markSettingsSections('google');
+    saveState();
+    const autoSync = document.getElementById('google-auto-sync');
+    if (autoSync) autoSync.checked = true;
+    setSyncLog('Googleログインしました。自動同期を開始します...');
+    await syncGoogleDrive({ auto: true, reason: 'startup' });
   } catch (error) {
     setSyncLog(error.message || 'Googleログインに失敗しました');
   }
@@ -1425,7 +1508,7 @@ async function sendDeviceToDrive() {
     saveGoogleSettings({ feedback: false, render: false, touch: false });
     setSyncLog('この端末のデータをクラウドへ送っています...');
     await getDriveToken(googleAccessToken ? '' : driveAuthPrompt);
-    await pushLocalDriveState();
+    await pushDriveStateToFile();
     setSyncLog(`この端末から送りました。予定 ${state.entries.length}件`);
   } catch (error) {
     setSyncLog(error.message || '送信に失敗しました');
@@ -1450,10 +1533,7 @@ async function receiveDeviceFromDrive() {
     const file = await findDriveSyncFile();
     if (!file) { setSyncLog('クラウドにNINQデータがまだありません。先に別端末で「この端末から送る」を押してください'); return; }
     const remotePayload = await readDriveSyncFile(file.id);
-    state = normalizeState(remotePayload.state || remotePayload);
-    saveState();
-    rememberDriveSync(remotePayload);
-    renderAll();
+    applyRemoteDriveState(remotePayload);
     setSyncLog(`クラウドから受け取りました。予定 ${state.entries.length}件`);
   } catch (error) {
     setSyncLog(error.message || '受け取りに失敗しました');
@@ -1466,6 +1546,13 @@ async function syncGoogleDrive({ auto = false, reason = '' } = {}) {
   if (activeScreen === 'st') flushSettingsAutosave();
   window.clearTimeout(driveSyncTimer);
   driveSyncTimer = null;
+  if (auto && (!state.settings.googleSyncEnabled || !state.settings.googleClientId)) return;
+  if (auto && !navigator.onLine) {
+    saveSyncPending(true, reason || 'offline');
+    setSyncLog('オフラインのため同期を待機しています');
+    renderSyncScreen();
+    return;
+  }
   if (driveSyncInFlight) {
     driveSyncQueued = true;
     return;
@@ -1479,7 +1566,7 @@ async function syncGoogleDrive({ auto = false, reason = '' } = {}) {
     await getDriveToken(googleAccessToken ? '' : driveAuthPrompt);
     const file = await findDriveSyncFile();
     if (!file) {
-      await pushLocalDriveState();
+      await pushDriveStateToFile();
       setSyncLog(auto ? '同期ファイルを作成しました' : 'この端末のデータをGoogle Driveに保存しました');
       return;
     }
@@ -1492,59 +1579,50 @@ async function syncGoogleDrive({ auto = false, reason = '' } = {}) {
     if (auto && reason === 'save') {
       if (remoteChanged) {
         if (localChanged) {
-          setSyncLog('別端末の変更があります。勝手に上書きせず止めました。「今すぐ同期」を押してください');
+          await resolveDriveConflict(file, remotePayload, { auto });
           return;
         }
-        state = normalizeState(remotePayload.state || remotePayload);
-        saveState();
-        rememberDriveSync(remotePayload);
-        renderAll();
+        applyRemoteDriveState(remotePayload);
         setSyncLog('クラウド側が新しかったため取得しました');
         return;
       }
-      await pushLocalDriveState();
+      await pushDriveStateToFile(file.id);
       setSyncLog(`変更を保存しました。予定 ${state.entries.length}件`);
       return;
     }
 
     if (auto && remoteChanged && localChanged) {
-      setSyncLog('PCとスマホの両方に未同期の変更があります。勝手に上書きせず止めました');
+      await resolveDriveConflict(file, remotePayload, { auto });
       return;
     }
 
     if (remoteChanged && !localChanged) {
-      state = normalizeState(remotePayload.state || remotePayload);
-      saveState();
-      rememberDriveSync(remotePayload);
-      renderAll();
+      applyRemoteDriveState(remotePayload);
       setSyncLog(`${auto ? '起動時にクラウドから取得しました。' : 'クラウドから取得しました。'}予定 ${state.entries.length}件`);
       return;
     }
 
     if (localChanged && !remoteChanged) {
-      await pushLocalDriveState();
+      await pushDriveStateToFile(file.id);
       setSyncLog(`${auto ? '端末の変更をクラウドへ保存しました。' : 'クラウドへ保存しました。'}予定 ${state.entries.length}件`);
       return;
     }
 
     if (remoteChanged && localChanged) {
-      state = mergeDriveState(remotePayload);
-      saveState();
-      const payload = syncPayload();
-      await updateDriveSyncFile(file.id, JSON.stringify(payload, null, 2));
-      rememberDriveSync(payload);
-      renderAll();
-      setSyncLog(`両方の変更をまとめました。予定 ${state.entries.length}件`);
+      await resolveDriveConflict(file, remotePayload, { auto });
       return;
     }
 
     rememberDriveSync(remotePayload);
+    saveSyncPending(false);
     setSyncLog(`${auto ? 'クラウドと同じ状態です。' : '同期済みです。'}予定 ${state.entries.length}件`);
   } catch (error) {
-    setSyncLog(auto ? '自動同期できませんでした。Googleログインしてください' : (error.message || 'Google Drive同期に失敗しました'));
+    if (auto) saveSyncPending(true, reason || 'retry');
+    setSyncLog(auto ? '自動同期できませんでした。次回オンライン時に再送します。必要ならGoogleログインしてください' : (error.message || 'Google Drive同期に失敗しました'));
   } finally {
     driveAuthPrompt = previousPrompt;
     driveSyncInFlight = false;
+    renderSyncScreen();
     if (driveSyncQueued) {
       driveSyncQueued = false;
       scheduleDriveAutoSync({ delay: 800, message: '続けて変更をクラウドへ保存します...' });
@@ -2132,6 +2210,17 @@ function bindEvents() {
   document.getElementById('st-expense-new')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); addSettingListItem('st-expenses', 'st-expense-new'); } });
   document.getElementById('save-google-settings-btn')?.addEventListener('click', saveGoogleSettings);
   document.getElementById('google-login-btn')?.addEventListener('click', loginGoogleDrive);
+  document.getElementById('google-auto-sync')?.addEventListener('change', () => {
+    saveGoogleSettings({ feedback: false, render: false });
+    setSyncLog(state.settings.googleSyncEnabled ? '自動同期をONにしました。ログイン済みなら自動で同期します' : '自動同期をOFFにしました');
+    if (state.settings.googleSyncEnabled) syncGoogleDrive({ auto: true, reason: 'startup' });
+    else renderSyncScreen();
+  });
+  document.getElementById('google-conflict-mode')?.addEventListener('change', () => {
+    saveGoogleSettings({ feedback: false, render: false });
+    setSyncLog(state.settings.googleConflictMode === 'confirm' ? '競合時は確認して選びます' : '競合時は更新日時が新しい方を採用します');
+    renderSyncScreen();
+  });
   document.getElementById('drive-send-device-btn')?.addEventListener('click', sendDeviceToDrive);
   document.getElementById('drive-receive-device-btn')?.addEventListener('click', receiveDeviceFromDrive);
   document.getElementById('google-export-range-btn')?.addEventListener('click', exportRangeCalendarIcs);
@@ -2309,11 +2398,27 @@ function bindEvents() {
 }
 
 function registerPwa() { if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('sw failed', error)); }
+function startCloudSyncHooks() {
+  window.addEventListener('online', () => {
+    if (!state.settings.googleSyncEnabled || !state.settings.googleClientId) return;
+    const pending = loadSyncPending();
+    setSyncLog(pending.pending ? 'オンラインに戻りました。未送信の変更を送信します...' : 'オンラインに戻りました。クラウドを確認します...');
+    syncGoogleDrive({ auto: true, reason: pending.pending ? 'save' : 'startup' });
+  });
+  window.addEventListener('offline', () => {
+    if (state.settings.googleSyncEnabled) setSyncLog('オフラインです。変更は端末に一時保存します');
+    renderSyncScreen();
+  });
+  if (state.settings.googleSyncEnabled && state.settings.googleClientId && navigator.onLine) {
+    window.setTimeout(() => syncGoogleDrive({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' }), 900);
+  }
+}
 function init() {
   bindEvents();
   renderAll();
   window.setTimeout(() => { cleanupLegacyDisplayPreferences(); applyDisplayPreferences(); }, 0);
   window.setTimeout(() => { cleanupLegacyDisplayPreferences(); applyDisplayPreferences(); }, 600);
+  startCloudSyncHooks();
   registerPwa();
 }
 document.addEventListener('DOMContentLoaded', init);

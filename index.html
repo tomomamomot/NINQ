@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json?v=35">
 <link rel="icon" href="icon-192.png?v=34">
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=34">
-<link rel="stylesheet" href="styles.css?v=53">
+<link rel="stylesheet" href="styles.css?v=54">
 </head>
 <body>
 <div id="sc-cal" class="screen active">
@@ -213,14 +213,22 @@
     <div class="sync-section">
       <div class="sync-section-head">
         <div>
-          <div class="sync-section-title">Google Drive同期</div>
-          <div class="sync-section-sub">自動ではなく、送る/受け取るで合わせる</div>
+          <div class="sync-section-title">NINQクラウド同期</div>
+          <div class="sync-section-sub">初回ログイン後は起動時取得・保存時送信を自動で試します</div>
         </div>
         <span id="drive-sync-status">未接続</span>
       </div>
       <div class="sync-field">
         <label for="google-client-id">GoogleクライアントID</label>
         <input id="google-client-id" class="st-input" placeholder="1234567890-xxxx.apps.googleusercontent.com">
+      </div>
+      <label class="sync-check"><input id="google-auto-sync" type="checkbox"> 自動同期を使う</label>
+      <div class="sync-field">
+        <label for="google-conflict-mode">PC/スマホの両方で変更した時</label>
+        <select id="google-conflict-mode" class="st-input">
+          <option value="newer">新しい方を採用</option>
+          <option value="confirm">確認して選ぶ</option>
+        </select>
       </div>
       <div class="sync-actions two">
         <button class="btn-secondary" type="button" id="google-login-btn">Googleログイン</button>
@@ -304,7 +312,7 @@
   </div>
 </div>
 
-<script src="app.js?v=75"></script>
+<script src="app.js?v=76"></script>
 <script src="settings-polish.js?v=1"></script>
 </body>
 </html>
