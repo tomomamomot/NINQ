@@ -134,6 +134,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .tbl-wrap{overflow:auto;margin:0 16px 12px;border:1px solid var(--line);border-radius:16px;background:#fff}
 .demen{width:100%;min-width:760px;border-collapse:collapse;font-size:12px}.demen th{padding:8px 6px;background:var(--accent);color:#fff;font-weight:800;white-space:nowrap}.demen td{padding:8px 6px;border-top:1px solid var(--line);text-align:center;white-space:nowrap}.demen td.right,.demen th.right{text-align:right}.demen tfoot td{background:#f6f8fb;font-weight:900}
 .invoice-actions{position:sticky;top:0;z-index:12;background:linear-gradient(180deg,var(--bg) 74%,rgba(238,243,248,0));padding-top:10px!important}
+.invoice-tool-row{display:flex;justify-content:flex-end;padding:10px 16px 8px}.invoice-tool-row label{display:inline-flex;align-items:center;gap:8px;color:var(--sub);font-size:13px;font-weight:900}.invoice-tool-row select{border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--ink);padding:8px 28px 8px 10px;font-size:14px;font-weight:900}
 .invoice-scroll{overflow:auto;margin:0 16px 14px}
 .invoice-sheet{position:relative;width:760px;min-height:980px;padding:28px 34px 34px;background:#fff;border:1px solid #111;color:#111;font-family:'Yu Gothic UI','Yu Gothic',Meiryo,sans-serif;font-size:12px;line-height:1.35;box-shadow:var(--shadow);overflow:hidden}
 .invoice-sheet.invoice-size-large{font-size:13px}.invoice-sheet.invoice-size-xlarge{font-size:14px}

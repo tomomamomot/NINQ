@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.02-2';
+const APP_VERSION = 'v2026.06.02-3';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -505,10 +505,10 @@ function syncMenuClones() {
   const subItem = subcontractEnabled() ? '<button class="top-menu-item" data-screen-link="sub">外注</button>' : '';
   const template = `
     <button class="top-menu-item" data-screen-link="cal">カレンダー</button>
-    ${subItem}
     <button class="top-menu-item" data-screen-link="inv">請求書、出面表</button>
     <button class="top-menu-item" data-screen-link="sync">Google同期</button>
-    <button class="top-menu-item" data-screen-link="receipt">領収書</button>
+    <button class="top-menu-item" data-screen-link="receipt">経費</button>
+    ${subItem}
     <button class="top-menu-item" data-screen-link="st">設定</button>
     <button class="top-menu-item" data-sales-toggle>${state.settings.showSales ? '売上を隠す' : '売上を表示'}</button>`;
   document.querySelectorAll('.top-menu').forEach((menu) => { menu.innerHTML = template; });
@@ -960,7 +960,8 @@ function renderInvoiceScreen() {
   const entries = entriesForInvoiceCompany();
   const totals = invoiceTotals(entries);
   const hidden = !state.settings.showSales;
-  body.innerHTML = `<div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
+  const invoiceFontSize = state.settings.invoiceFontSize || DEFAULT_SETTINGS.invoiceFontSize;
+  body.innerHTML = `<div class="invoice-tool-row"><label>請求書フォント<select id="invoice-font-size-select"><option value="normal" ${invoiceFontSize === 'normal' ? 'selected' : ''}>標準</option><option value="large" ${invoiceFontSize === 'large' ? 'selected' : ''}>大きめ</option><option value="xlarge" ${invoiceFontSize === 'xlarge' ? 'selected' : ''}>特大</option></select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
 }
 function expenseTotals(entries) {
   return expenseItems().map((item) => ({
@@ -2032,7 +2033,7 @@ function persistSettingsFromForm({ render = false, feedback = '', sections = [] 
     overtime: document.getElementById('tgl-sales-overtime')?.classList.contains('on') !== false,
     expenses: document.getElementById('tgl-sales-expenses')?.classList.contains('on') === true,
   };
-  state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, uiSize: document.getElementById('st-ui-size')?.value || DEFAULT_SETTINGS.uiSize, fontChoice: document.getElementById('st-font-choice')?.value || DEFAULT_SETTINGS.fontChoice, invoiceFontSize: document.getElementById('st-invoice-font-size')?.value || DEFAULT_SETTINGS.invoiceFontSize, salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: linesToObjects(document.getElementById('st-expenses').value, expenseItems()) };
+  state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, uiSize: document.getElementById('st-ui-size')?.value || DEFAULT_SETTINGS.uiSize, fontChoice: document.getElementById('st-font-choice')?.value || DEFAULT_SETTINGS.fontChoice, invoiceFontSize: document.getElementById('st-invoice-font-size')?.value || state.settings.invoiceFontSize || DEFAULT_SETTINGS.invoiceFontSize, salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: linesToObjects(document.getElementById('st-expenses').value, expenseItems()) };
   markSettingsSections(sections.length ? sections : Object.keys(SETTINGS_SECTIONS).filter((section) => section !== 'google'));
   state.entries = state.entries.map((entry) => { const nextExpenses = {}; expenseItems().forEach((item) => { nextExpenses[item.id] = num(entry.expenses?.[item.id]); }); return { ...entry, expenses: nextExpenses }; });
   applyDisplayPreferences();
@@ -2369,6 +2370,14 @@ function bindEvents() {
     if (sheetInput) { saveDesktopSheetRow(sheetInput.closest('[data-sheet-row]')); return; }
     if (event.target.id === 'f-date' || event.target.id === 'f-end-date') { renderRangeExclusions(); return; }
     if (event.target.id === 'google-export-start' || event.target.id === 'google-export-end') { renderSyncScreen(); return; }
+    if (event.target.id === 'invoice-font-size-select') {
+      state.settings.invoiceFontSize = event.target.value || DEFAULT_SETTINGS.invoiceFontSize;
+      markSettingsSections('invoice');
+      saveState();
+      renderInvoiceScreen();
+      scheduleDriveAutoSync({ message: '請求書フォント設定をクラウドへ保存します...' });
+      return;
+    }
     if (event.target.matches('#st-tax,#st-invoice-font-size')) { scheduleSettingsAutosave({ immediate: true, section: 'invoice' }); return; }
     if (event.target.matches('#st-ui-size,#st-font-choice')) { scheduleSettingsAutosave({ immediate: true, section: 'display' }); return; }
     if (event.target.matches('[data-range-exclude]')) { event.target.closest('.range-exclude-chip')?.classList.toggle('checked', event.target.checked); return; }
