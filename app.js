@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.02-7';
+const APP_VERSION = 'v2026.06.02-8';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -932,6 +932,7 @@ function dayInvoiceSummary(entries, day, expenseColumns) {
 }
 function buildDemenSheet(entries, totals, hidden) {
   const expenseColumns = totals.expenses;
+  const demenFontSize = fontSizeLevel(state.settings.invoiceFontSize);
   const days = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
   const expenseHeaders = `${DEMEN_EXPENSE_LABELS.map((label) => `<th>${escapeHtml(label)}</th>`).join('')}<th>金　額</th>`;
   const demenRow = (day, entry = null, dayRowspan = 1) => {
@@ -950,8 +951,8 @@ function buildDemenSheet(entries, totals, hidden) {
     return dayItems.length ? dayItems.map((entry, entryIndex) => demenRow(entryIndex === 0 ? day : null, entry, dayItems.length)).join('') : demenRow(day);
   }).join('');
   return `
-    <div class="tbl-wrap demen-sheet-wrap" id="print-demen-wrap">
-      <table class="demen demen-sheet">
+    <div class="tbl-wrap demen-sheet-wrap demen-size-${demenFontSize}" id="print-demen-wrap">
+      <table class="demen demen-sheet demen-size-${demenFontSize}">
         <thead>
           <tr class="demen-title-row"><th colspan="4" class="demen-title-spacer"></th><th class="demen-title-main">${cursor.getMonth() + 1}</th><th colspan="3" class="left demen-title-main">月 出面表</th><th colspan="5"></th><th class="right demen-title-name">氏名：</th><th class="demen-title-name">${escapeHtml(state.settings.name || '')}</th></tr>
           <tr><th>日</th><th>現場名</th><th>人工</th><th>人工単価</th><th>人工合計</th><th>残業h</th><th>残業単価</th><th>残業合計</th>${expenseHeaders}</tr>
@@ -1358,7 +1359,6 @@ async function driveFetch(url, options = {}, retry = true) {
   const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } });
   if (response.status === 401 && retry) {
     googleAccessToken = '';
-    if (driveAuthPrompt === '') throw new Error('Googleログインが必要です');
     await getDriveToken(driveAuthPrompt);
     return driveFetch(url, options, false);
   }
@@ -1370,7 +1370,6 @@ async function calendarFetch(url, options = {}, retry = true) {
   const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } });
   if (response.status === 401 && retry) {
     googleAccessToken = '';
-    if (driveAuthPrompt === '') throw new Error('Googleログインが必要です');
     await getDriveToken(driveAuthPrompt);
     return calendarFetch(url, options, false);
   }
@@ -1572,12 +1571,6 @@ async function syncGoogleDrive({ auto = false, reason = '' } = {}) {
     renderSyncScreen();
     return;
   }
-  if (auto && !googleAccessToken) {
-    saveSyncPending(reason === 'save' || loadSyncPending().pending, reason || 'login');
-    setSyncLog('自動同期は待機中です。小さい認証画面を出さないため、必要な時だけGoogleログインを押してください');
-    renderSyncScreen();
-    return;
-  }
   if (driveSyncInFlight) {
     driveSyncQueued = true;
     return;
@@ -1585,7 +1578,7 @@ async function syncGoogleDrive({ auto = false, reason = '' } = {}) {
   driveSyncInFlight = true;
   const previousPrompt = driveAuthPrompt;
   try {
-    driveAuthPrompt = auto ? '' : 'consent';
+    driveAuthPrompt = 'consent';
     saveGoogleSettings({ feedback: false, render: false, touch: false });
     setSyncLog(auto && reason === 'save' ? '変更をGoogle Driveへ保存中です...' : (auto ? 'Google Driveから最新データを確認中です...' : 'Google Driveと同期中です...'));
     await getDriveToken(googleAccessToken ? '' : driveAuthPrompt);
