@@ -5,10 +5,10 @@
 
   const MENU_ITEMS = [
     { screen: 'cal', label: 'カレンダー' },
-    { screen: 'sub', label: '外注' },
-    { screen: 'inv', label: '請求' },
+    { screen: 'inv', label: '請求書、出面表' },
     { screen: 'sync', label: 'Google同期' },
-    { screen: 'receipt', label: '領収書' },
+    { screen: 'receipt', label: '経費' },
+    { screen: 'sub', label: '外注' },
     { screen: 'st', label: '設定' },
   ];
 
