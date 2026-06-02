@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.02-10';
+const APP_VERSION = 'v2026.06.02-11';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -52,7 +52,6 @@ let sheetZoom = 1;
 let sheetSelection = null;
 let sheetMouseSelecting = false;
 let printCleanupTimer = null;
-let syncLogMessage = '';
 
 function loadState() {
   try {
@@ -1011,7 +1010,7 @@ function renderSyncScreen() {
   const conflictMode = document.getElementById('google-conflict-mode'); if (conflictMode) conflictMode.value = state.settings.googleConflictMode || 'newer';
   const driveStatus = document.getElementById('drive-sync-status'); if (driveStatus) driveStatus.textContent = syncStatusText();
   const pending = loadSyncPending();
-  const log = document.getElementById('sync-log'); if (log) log.textContent = syncLogMessage || (pending.pending ? '未送信の変更があります。オンライン復帰後に自動送信します' : '初回だけGoogleログインすると、以後は起動時取得・保存時送信を自動で試します');
+  const log = document.getElementById('sync-log'); if (log && !log.textContent) log.textContent = pending.pending ? '未送信の変更があります。オンライン復帰後に自動送信します' : '初回だけGoogleログインすると、以後は起動時取得・保存時送信を自動で試します';
 }
 function renderReceiptScreen() {
   const sub = document.getElementById('receipt-sub'); if (sub) sub.textContent = `${state.receipts?.length || 0}件`;
@@ -1278,11 +1277,7 @@ function saveGoogleSettings({ feedback = true, render = true, touch = true } = {
   if (render) renderAll();
   if (feedback) setSyncLog('Google設定を保存しました');
 }
-function setSyncLog(message) {
-  syncLogMessage = message || '';
-  const log = document.getElementById('sync-log');
-  if (log) log.textContent = syncLogMessage;
-}
+function setSyncLog(message) { const log = document.getElementById('sync-log'); if (log) log.textContent = message; }
 function scheduleDriveAutoSync({ delay = 1200, message = '', reason = 'save' } = {}) {
   window.clearTimeout(driveSyncTimer);
   driveSyncTimer = null;
