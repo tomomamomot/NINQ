@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.02-5';
+const APP_VERSION = 'v2026.06.02-6';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -51,6 +51,7 @@ let sheetDragStart = null;
 let sheetZoom = 1;
 let sheetSelection = null;
 let sheetMouseSelecting = false;
+let printCleanupTimer = null;
 
 function loadState() {
   try {
@@ -645,7 +646,7 @@ function renderDesktopSheet() {
     if (!entries.length) rows.push(desktopSheetRow(null, date, day, expenseColumns, rows.length));
     entries.forEach((entry, index) => rows.push(desktopSheetRow(entry, date, index === 0 ? day : null, expenseColumns, rows.length, entries.length)));
   }
-  panel.innerHTML = `<div class="desktop-sheet-head"><div><strong>${cursor.getMonth() + 1}月 出面表</strong><span>出力プレビュー / PC編集可</span></div><button class="desktop-sheet-close" type="button" data-close-sheet-page>カレンダーへ</button></div>
+  panel.innerHTML = `<div class="desktop-sheet-head"><div><strong>${cursor.getMonth() + 1}月 出面表</strong><span>出力プレビュー / PC編集可</span></div><div class="desktop-sheet-head-actions"><button class="desktop-sheet-menu-btn" type="button" data-menu-open aria-label="メニュー">☰</button><button class="desktop-sheet-close" type="button" data-close-sheet-page>カレンダーへ</button></div></div>
     <div class="desktop-sheet-scroll"><table class="desktop-sheet-table">
       ${desktopSheetColgroup(expenseColumns)}
       <thead>
@@ -1348,6 +1349,7 @@ async function driveFetch(url, options = {}, retry = true) {
   const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } });
   if (response.status === 401 && retry) {
     googleAccessToken = '';
+    if (driveAuthPrompt === '') throw new Error('Googleログインが必要です');
     await getDriveToken(driveAuthPrompt);
     return driveFetch(url, options, false);
   }
@@ -1359,6 +1361,7 @@ async function calendarFetch(url, options = {}, retry = true) {
   const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } });
   if (response.status === 401 && retry) {
     googleAccessToken = '';
+    if (driveAuthPrompt === '') throw new Error('Googleログインが必要です');
     await getDriveToken(driveAuthPrompt);
     return calendarFetch(url, options, false);
   }
@@ -1557,6 +1560,12 @@ async function syncGoogleDrive({ auto = false, reason = '' } = {}) {
   if (auto && !navigator.onLine) {
     saveSyncPending(true, reason || 'offline');
     setSyncLog('オフラインのため同期を待機しています');
+    renderSyncScreen();
+    return;
+  }
+  if (auto && !googleAccessToken) {
+    saveSyncPending(reason === 'save' || loadSyncPending().pending, reason || 'login');
+    setSyncLog('自動同期は待機中です。小さい認証画面を出さないため、必要な時だけGoogleログインを押してください');
     renderSyncScreen();
     return;
   }
@@ -2140,10 +2149,24 @@ function exportInvoiceCsv() {
   downloadCsv(`${monthKey(cursor)}_${selectedCompany}_請求書.csv`, [['請求先', companyOfficialName(selectedCompany)], ['対象月', fmtMonth(cursor)], ['売上（税別）', totals.subtotal], ['消費税', totals.tax], ['諸経費', totals.expenseTotal], ['合計', totals.total]]);
 }
 function printView(kind) {
-  const screen = document.getElementById('sc-inv'); screen.classList.add('print-active');
-  if (kind === 'invoice') document.getElementById('print-demen-wrap')?.classList.add('hidden'); else document.getElementById('print-invoice-box')?.classList.add('hidden');
+  const screen = document.getElementById('sc-inv');
+  const demen = document.getElementById('print-demen-wrap');
+  const invoice = document.getElementById('print-invoice-box');
+  const cleanup = () => {
+    window.clearTimeout(printCleanupTimer);
+    demen?.classList.remove('hidden');
+    invoice?.classList.remove('hidden');
+    screen?.classList.remove('print-active');
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.clearTimeout(printCleanupTimer);
+  window.removeEventListener('afterprint', cleanup);
+  screen?.classList.add('print-active');
+  if (kind === 'invoice') demen?.classList.add('hidden');
+  else invoice?.classList.add('hidden');
+  window.addEventListener('afterprint', cleanup, { once: true });
   window.print();
-  document.getElementById('print-demen-wrap')?.classList.remove('hidden'); document.getElementById('print-invoice-box')?.classList.remove('hidden'); screen.classList.remove('print-active');
+  printCleanupTimer = window.setTimeout(cleanup, 60000);
 }
 function desktopSheetEntryFromRow(row, existing = null) {
   const value = (field) => row.querySelector(`[data-sheet-field="${field}"]`)?.value?.trim() || '';
