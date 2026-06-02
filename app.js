@@ -5,15 +5,15 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.02-6';
+const APP_VERSION = 'v2026.06.02-7';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
-  invoiceNo: '', invoiceEnabled: true, taxRate: 10, stampImage: '', invoiceFontSize: 'normal',
+  invoiceNo: '', invoiceEnabled: true, taxRate: 10, stampImage: '', invoiceFontSize: '1',
   defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0,
   companies: [], companyRates: [], expenseItems: DEFAULT_EXPENSE_ITEMS.map((label, index) => ({ id: `exp${index + 1}`, label })),
-  companyInvoiceModes: {}, showSales: true, showSubcontract: true, uiSize: 'normal', fontChoice: 'system', googleClientId: '', googleCalendarId: 'primary', googleStoreMode: 'local', googleAccountEmail: '', googleSyncEnabled: false, googleConflictMode: 'newer',
+  companyInvoiceModes: {}, showSales: true, showSubcontract: true, uiSize: '1', fontChoice: 'system', googleClientId: '', googleCalendarId: 'primary', googleStoreMode: 'local', googleAccountEmail: '', googleSyncEnabled: false, googleConflictMode: 'newer',
   salesTotalParts: { labor: true, overtime: true, expenses: false }, settingUpdatedAt: {},
 };
 const DEFAULT_STATE = { entries: [], receipts: [], deletedEntryIds: {}, settings: DEFAULT_SETTINGS };
@@ -71,15 +71,24 @@ function loadState() {
   return clone(DEFAULT_STATE);
 }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
+function fontSizeLevel(value) {
+  const legacy = { normal: '1', large: '2', xlarge: '3' };
+  const next = legacy[value] || String(value || '1');
+  return ['1', '2', '3', '4', '5', '6'].includes(next) ? next : '1';
+}
+function fontSizeOptions(selected) {
+  const current = fontSizeLevel(selected);
+  return ['1', '2', '3', '4', '5', '6'].map((level) => `<option value="${level}" ${level === current ? 'selected' : ''}>${level}</option>`).join('');
+}
 function normalizeState(source) {
   const settings = { ...clone(DEFAULT_SETTINGS), ...(source.settings || {}) };
   settings.companies = Array.isArray(settings.companies) ? settings.companies.filter(Boolean) : [];
   settings.expenseItems = normalizeExpenseItems(settings.expenseItems);
   settings.companyInvoiceModes = settings.companyInvoiceModes && typeof settings.companyInvoiceModes === 'object' ? settings.companyInvoiceModes : {};
   settings.salesTotalParts = { ...DEFAULT_SETTINGS.salesTotalParts, ...(settings.salesTotalParts || {}) };
-  if (!['normal', 'large', 'xlarge'].includes(settings.uiSize)) settings.uiSize = DEFAULT_SETTINGS.uiSize;
+  settings.uiSize = fontSizeLevel(settings.uiSize);
   if (!['system', 'meiryo', 'gothic', 'rounded'].includes(settings.fontChoice)) settings.fontChoice = DEFAULT_SETTINGS.fontChoice;
-  if (!['normal', 'large', 'xlarge'].includes(settings.invoiceFontSize)) settings.invoiceFontSize = DEFAULT_SETTINGS.invoiceFontSize;
+  settings.invoiceFontSize = fontSizeLevel(settings.invoiceFontSize);
   if (!['newer', 'confirm'].includes(settings.googleConflictMode)) settings.googleConflictMode = DEFAULT_SETTINGS.googleConflictMode;
   settings.settingUpdatedAt = settings.settingUpdatedAt && typeof settings.settingUpdatedAt === 'object' ? settings.settingUpdatedAt : {};
   const entries = Array.isArray(source.entries) ? source.entries.map(normalizeEntry) : [];
@@ -851,7 +860,7 @@ function invoiceTotals(entries) {
 }
 function buildInvoiceSheet(entries, totals, hidden) {
   const s = state.settings;
-  const invoiceFontSize = ['normal', 'large', 'xlarge'].includes(s.invoiceFontSize) ? s.invoiceFontSize : DEFAULT_SETTINGS.invoiceFontSize;
+  const invoiceFontSize = fontSizeLevel(s.invoiceFontSize);
   const invoiceCompany = companyOfficialName(selectedCompany);
   const otRate = entries.find((entry) => calcEntry(entry).otRate)?.otRate || 0;
   const stamp = s.stampImage ? `<img class="invoice-stamp" src="${s.stampImage}" alt="印鑑">` : '';
@@ -964,8 +973,8 @@ function renderInvoiceScreen() {
   const entries = entriesForInvoiceCompany();
   const totals = invoiceTotals(entries);
   const hidden = !state.settings.showSales;
-  const invoiceFontSize = state.settings.invoiceFontSize || DEFAULT_SETTINGS.invoiceFontSize;
-  body.innerHTML = `<div class="invoice-tool-row"><label>請求書フォント<select id="invoice-font-size-select"><option value="normal" ${invoiceFontSize === 'normal' ? 'selected' : ''}>標準</option><option value="large" ${invoiceFontSize === 'large' ? 'selected' : ''}>大きめ</option><option value="xlarge" ${invoiceFontSize === 'xlarge' ? 'selected' : ''}>特大</option></select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
+  const invoiceFontSize = fontSizeLevel(state.settings.invoiceFontSize);
+  body.innerHTML = `<div class="invoice-tool-row"><label>請求書フォント<select id="invoice-font-size-select">${fontSizeOptions(invoiceFontSize)}</select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
 }
 function expenseTotals(entries) {
   return expenseItems().map((item) => ({
@@ -1031,9 +1040,9 @@ function renderSettings() {
   document.getElementById('tgl-sales-labor')?.classList.toggle('on', !!salesParts.labor);
   document.getElementById('tgl-sales-overtime')?.classList.toggle('on', !!salesParts.overtime);
   document.getElementById('tgl-sales-expenses')?.classList.toggle('on', !!salesParts.expenses);
-  const uiSize = document.getElementById('st-ui-size'); if (uiSize) uiSize.value = s.uiSize || DEFAULT_SETTINGS.uiSize;
+  const uiSize = document.getElementById('st-ui-size'); if (uiSize) uiSize.value = fontSizeLevel(s.uiSize);
   const fontChoice = document.getElementById('st-font-choice'); if (fontChoice) fontChoice.value = s.fontChoice || DEFAULT_SETTINGS.fontChoice;
-  const invoiceFontSize = document.getElementById('st-invoice-font-size'); if (invoiceFontSize) invoiceFontSize.value = s.invoiceFontSize || DEFAULT_SETTINGS.invoiceFontSize;
+  const invoiceFontSize = document.getElementById('st-invoice-font-size'); if (invoiceFontSize) invoiceFontSize.value = fontSizeLevel(s.invoiceFontSize);
   document.getElementById('inv-no-row').classList.toggle('hidden', !s.invoiceEnabled);
   const stampPreview = document.getElementById('stamp-preview');
   if (stampPreview) {
@@ -2045,7 +2054,7 @@ function persistSettingsFromForm({ render = false, feedback = '', sections = [] 
     overtime: document.getElementById('tgl-sales-overtime')?.classList.contains('on') !== false,
     expenses: document.getElementById('tgl-sales-expenses')?.classList.contains('on') === true,
   };
-  state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, uiSize: document.getElementById('st-ui-size')?.value || DEFAULT_SETTINGS.uiSize, fontChoice: document.getElementById('st-font-choice')?.value || DEFAULT_SETTINGS.fontChoice, invoiceFontSize: document.getElementById('st-invoice-font-size')?.value || state.settings.invoiceFontSize || DEFAULT_SETTINGS.invoiceFontSize, salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: linesToObjects(document.getElementById('st-expenses').value, expenseItems()) };
+  state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, uiSize: fontSizeLevel(document.getElementById('st-ui-size')?.value || DEFAULT_SETTINGS.uiSize), fontChoice: document.getElementById('st-font-choice')?.value || DEFAULT_SETTINGS.fontChoice, invoiceFontSize: fontSizeLevel(document.getElementById('st-invoice-font-size')?.value || state.settings.invoiceFontSize || DEFAULT_SETTINGS.invoiceFontSize), salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: linesToObjects(document.getElementById('st-expenses').value, expenseItems()) };
   markSettingsSections(sections.length ? sections : Object.keys(SETTINGS_SECTIONS).filter((section) => section !== 'google'));
   state.entries = state.entries.map((entry) => { const nextExpenses = {}; expenseItems().forEach((item) => { nextExpenses[item.id] = num(entry.expenses?.[item.id]); }); return { ...entry, expenses: nextExpenses }; });
   applyDisplayPreferences();
@@ -2397,7 +2406,7 @@ function bindEvents() {
     if (event.target.id === 'f-date' || event.target.id === 'f-end-date') { renderRangeExclusions(); return; }
     if (event.target.id === 'google-export-start' || event.target.id === 'google-export-end') { renderSyncScreen(); return; }
     if (event.target.id === 'invoice-font-size-select') {
-      state.settings.invoiceFontSize = event.target.value || DEFAULT_SETTINGS.invoiceFontSize;
+      state.settings.invoiceFontSize = fontSizeLevel(event.target.value || DEFAULT_SETTINGS.invoiceFontSize);
       markSettingsSections('invoice');
       saveState();
       renderInvoiceScreen();

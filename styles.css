@@ -6,6 +6,11 @@
   --safe-top:env(safe-area-inset-top,0px);--safe-bot:env(safe-area-inset-bottom,0px);--shadow:0 10px 28px rgba(15,23,42,.08);
   --app-font:-apple-system,BlinkMacSystemFont,'Segoe UI','Hiragino Sans','Yu Gothic UI',sans-serif;--body-size:17px;--cal-day-min:112px;--cal-date-size:18px;--cal-task-size:12px;--cal-task-line:1.25;--modal-title-size:20px;--modal-site-size:18px;--modal-meta-size:14px;--expense-chip-size:13px;--field-label-size:16px;--control-size:17px
 }
+body[data-ui-size="2"]{--body-size:18px;--cal-day-min:124px;--cal-date-size:20px;--cal-task-size:13.5px;--cal-task-line:1.3;--modal-title-size:22px;--modal-site-size:20px;--modal-meta-size:15.5px;--expense-chip-size:14px;--field-label-size:17px;--control-size:18px}
+body[data-ui-size="3"]{--body-size:19px;--cal-day-min:138px;--cal-date-size:22px;--cal-task-size:15px;--cal-task-line:1.32;--modal-title-size:24px;--modal-site-size:22px;--modal-meta-size:17px;--expense-chip-size:15px;--field-label-size:18px;--control-size:19px}
+body[data-ui-size="4"]{--body-size:20px;--cal-day-min:150px;--cal-date-size:24px;--cal-task-size:16.5px;--cal-task-line:1.34;--modal-title-size:26px;--modal-site-size:24px;--modal-meta-size:18.5px;--expense-chip-size:16px;--field-label-size:19px;--control-size:20px}
+body[data-ui-size="5"]{--body-size:21px;--cal-day-min:162px;--cal-date-size:26px;--cal-task-size:18px;--cal-task-line:1.36;--modal-title-size:28px;--modal-site-size:26px;--modal-meta-size:20px;--expense-chip-size:17px;--field-label-size:20px;--control-size:21px}
+body[data-ui-size="6"]{--body-size:22px;--cal-day-min:174px;--cal-date-size:28px;--cal-task-size:19.5px;--cal-task-line:1.38;--modal-title-size:30px;--modal-site-size:28px;--modal-meta-size:21.5px;--expense-chip-size:18px;--field-label-size:21px;--control-size:22px}
 body[data-ui-size="large"]{--body-size:18px;--cal-day-min:124px;--cal-date-size:20px;--cal-task-size:13.5px;--cal-task-line:1.3;--modal-title-size:22px;--modal-site-size:20px;--modal-meta-size:15.5px;--expense-chip-size:14px;--field-label-size:17px;--control-size:18px}
 body[data-ui-size="xlarge"]{--body-size:19px;--cal-day-min:138px;--cal-date-size:22px;--cal-task-size:15px;--cal-task-line:1.32;--modal-title-size:24px;--modal-site-size:22px;--modal-meta-size:17px;--expense-chip-size:15px;--field-label-size:18px;--control-size:19px}
 body[data-font="meiryo"]{--app-font:Meiryo,'Hiragino Sans','Noto Sans JP',sans-serif}
@@ -137,11 +142,11 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .invoice-tool-row{display:flex;justify-content:flex-end;padding:10px 16px 8px}.invoice-tool-row label{display:inline-flex;align-items:center;gap:8px;color:var(--sub);font-size:13px;font-weight:900}.invoice-tool-row select{border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--ink);padding:8px 28px 8px 10px;font-size:14px;font-weight:900}
 .invoice-scroll{overflow:auto;margin:0 16px 14px}
 .invoice-sheet{position:relative;width:760px;min-height:980px;padding:28px 34px 34px;background:#fff;border:1px solid #111;color:#111;font-family:'Yu Gothic UI','Yu Gothic',Meiryo,sans-serif;font-size:12px;line-height:1.35;box-shadow:var(--shadow);overflow:hidden}
-.invoice-sheet.invoice-size-large{font-size:13px}.invoice-sheet.invoice-size-xlarge{font-size:14px}
-.invoice-sheet.invoice-size-large .invoice-table{font-size:12px}.invoice-sheet.invoice-size-xlarge .invoice-table{font-size:13px}
-.invoice-sheet.invoice-size-large .invoice-title{font-size:23px}.invoice-sheet.invoice-size-xlarge .invoice-title{font-size:24px}
-.invoice-sheet.invoice-size-large .invoice-to{font-size:19px}.invoice-sheet.invoice-size-xlarge .invoice-to{font-size:20px}
-.invoice-sheet.invoice-size-large .invoice-amount strong{font-size:21px}.invoice-sheet.invoice-size-xlarge .invoice-amount strong{font-size:22px}
+.invoice-sheet.invoice-size-2{font-size:13px}.invoice-sheet.invoice-size-3{font-size:14px}.invoice-sheet.invoice-size-4{font-size:15px}.invoice-sheet.invoice-size-5{font-size:16px}.invoice-sheet.invoice-size-6{font-size:17px}
+.invoice-sheet.invoice-size-2 .invoice-table{font-size:12px}.invoice-sheet.invoice-size-3 .invoice-table{font-size:13px}.invoice-sheet.invoice-size-4 .invoice-table{font-size:14px}.invoice-sheet.invoice-size-5 .invoice-table{font-size:15px}.invoice-sheet.invoice-size-6 .invoice-table{font-size:16px}
+.invoice-sheet.invoice-size-2 .invoice-title{font-size:23px}.invoice-sheet.invoice-size-3 .invoice-title{font-size:24px}.invoice-sheet.invoice-size-4 .invoice-title{font-size:26px}.invoice-sheet.invoice-size-5 .invoice-title{font-size:28px}.invoice-sheet.invoice-size-6 .invoice-title{font-size:30px}
+.invoice-sheet.invoice-size-2 .invoice-to{font-size:19px}.invoice-sheet.invoice-size-3 .invoice-to{font-size:20px}.invoice-sheet.invoice-size-4 .invoice-to{font-size:21px}.invoice-sheet.invoice-size-5 .invoice-to{font-size:22px}.invoice-sheet.invoice-size-6 .invoice-to{font-size:23px}
+.invoice-sheet.invoice-size-2 .invoice-amount strong{font-size:21px}.invoice-sheet.invoice-size-3 .invoice-amount strong{font-size:22px}.invoice-sheet.invoice-size-4 .invoice-amount strong{font-size:24px}.invoice-sheet.invoice-size-5 .invoice-amount strong{font-size:26px}.invoice-sheet.invoice-size-6 .invoice-amount strong{font-size:28px}
 .invoice-title{text-align:center;font-size:22px;font-weight:800;letter-spacing:.26em;padding-left:.26em;margin-bottom:18px}
 .invoice-date{text-align:right;margin-bottom:14px}
 .invoice-to{display:flex;align-items:flex-end;gap:18px;width:45%;border-bottom:1px solid #111;font-size:18px;font-weight:700;padding:0 4px 4px;margin-bottom:12px}
@@ -184,7 +189,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .empty{text-align:center;padding:48px 20px;color:var(--sub)}.empty .icon{font-size:44px;margin-bottom:10px}.empty p{margin-top:6px;font-size:14px}
 .hidden{display:none!important}
 @media print{@page{size:A4 portrait;margin:18mm 14mm 12mm}html,body{background:#fff;max-width:none;width:100%;margin:0}.nav,.fab,.month-nav,.topbar,.co-tabs,.mode-switch,.ghost-btn,.btn-row,.btn-primary,.btn-secondary,.btn-gold{display:none!important}.screen{display:none!important;padding:0;min-height:auto}.screen.print-active{display:block!important;padding-top:4mm!important}.inv-box,.tbl-wrap,.invoice-scroll,.invoice-sheet{box-shadow:none;border:none}.invoice-scroll{overflow:visible;margin:0;display:flex;justify-content:center}.invoice-sheet{width:180mm;min-height:auto;padding:0;margin:0 auto;box-sizing:border-box}.demen-sheet-wrap{width:180mm;margin:0 auto;padding:0;overflow:visible;box-sizing:border-box}.demen-sheet{min-width:0;width:100%;font-size:8.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact}.demen-sheet td.demen-night-site,.demen-sheet tr.demen-night-row td.demen-night-site{background:var(--night)!important;color:#fff!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-@media print{.invoice-tool-row{display:none!important}.invoice-sheet.invoice-size-large{font-size:13px!important}.invoice-sheet.invoice-size-xlarge{font-size:14px!important}.invoice-sheet.invoice-size-large .invoice-table{font-size:12px!important}.invoice-sheet.invoice-size-xlarge .invoice-table{font-size:13px!important}.invoice-sheet.invoice-size-large .invoice-title{font-size:23px!important}.invoice-sheet.invoice-size-xlarge .invoice-title{font-size:24px!important}.invoice-sheet.invoice-size-large .invoice-to{font-size:19px!important}.invoice-sheet.invoice-size-xlarge .invoice-to{font-size:20px!important}.invoice-sheet.invoice-size-large .invoice-amount strong{font-size:21px!important}.invoice-sheet.invoice-size-xlarge .invoice-amount strong{font-size:22px!important}}
+@media print{.invoice-tool-row{display:none!important}.invoice-sheet.invoice-size-2{font-size:13px!important}.invoice-sheet.invoice-size-3{font-size:14px!important}.invoice-sheet.invoice-size-4{font-size:15px!important}.invoice-sheet.invoice-size-5{font-size:16px!important}.invoice-sheet.invoice-size-6{font-size:17px!important}.invoice-sheet.invoice-size-2 .invoice-table{font-size:12px!important}.invoice-sheet.invoice-size-3 .invoice-table{font-size:13px!important}.invoice-sheet.invoice-size-4 .invoice-table{font-size:14px!important}.invoice-sheet.invoice-size-5 .invoice-table{font-size:15px!important}.invoice-sheet.invoice-size-6 .invoice-table{font-size:16px!important}.invoice-sheet.invoice-size-2 .invoice-title{font-size:23px!important}.invoice-sheet.invoice-size-3 .invoice-title{font-size:24px!important}.invoice-sheet.invoice-size-4 .invoice-title{font-size:26px!important}.invoice-sheet.invoice-size-5 .invoice-title{font-size:28px!important}.invoice-sheet.invoice-size-6 .invoice-title{font-size:30px!important}.invoice-sheet.invoice-size-2 .invoice-to{font-size:19px!important}.invoice-sheet.invoice-size-3 .invoice-to{font-size:20px!important}.invoice-sheet.invoice-size-4 .invoice-to{font-size:21px!important}.invoice-sheet.invoice-size-5 .invoice-to{font-size:22px!important}.invoice-sheet.invoice-size-6 .invoice-to{font-size:23px!important}.invoice-sheet.invoice-size-2 .invoice-amount strong{font-size:21px!important}.invoice-sheet.invoice-size-3 .invoice-amount strong{font-size:22px!important}.invoice-sheet.invoice-size-4 .invoice-amount strong{font-size:24px!important}.invoice-sheet.invoice-size-5 .invoice-amount strong{font-size:26px!important}.invoice-sheet.invoice-size-6 .invoice-amount strong{font-size:28px!important}}
 .topbar-actions{display:flex;align-items:center;gap:8px}
 .sheet-open-btn{padding:8px 11px;font-size:13px}
 .ghost-icon-btn{border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.12);color:#fff;border-radius:12px;padding:9px 12px;font-size:18px;font-weight:800;line-height:1}
@@ -309,10 +314,10 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 }
 
 @media (max-width:480px){
-  body{font-size:17px;max-width:430px;background:#edf2f7}
+  body{font-size:var(--body-size);max-width:430px;background:#edf2f7}
   .screen{padding-bottom:calc(78px + var(--safe-bot))}
   .topbar{padding:calc(12px + var(--safe-top)) 14px 10px}
-  .topbar-title{font-size:22px}
+  .topbar-title{font-size:var(--modal-title-size)}
   .topbar-sub{font-size:13px}
   .month-nav{top:77px;padding:12px 16px;background:#fff}
   .month-nav button{width:46px;height:40px;border-radius:20px;background:#f0f3f7;color:#4b5563;font-size:31px;line-height:1}
@@ -320,15 +325,15 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
   .cal-grid{grid-template-columns:repeat(7,minmax(0,1fr));gap:0;padding:0 8px 12px;background:#fff;border-top:1px solid #e3e7ec;border-bottom:1px solid var(--line)}
   .cal-dow{height:28px;padding:4px 0 3px;border-right:1px solid #e3e7ec;color:#5f6368;font-size:15px;font-weight:650}
   .cal-dow:nth-child(7){border-right:none}
-  .cal-day{min-width:0;min-height:112px;border-radius:0;border-right:1px solid #e3e7ec;border-bottom:1px solid #e3e7ec;background:#f8fafc;padding:3px 3px 4px;gap:3px}
+  .cal-day{min-width:0;min-height:var(--cal-day-min);border-radius:0;border-right:1px solid #e3e7ec;border-bottom:1px solid #e3e7ec;background:#f8fafc;padding:3px 3px 4px;gap:3px}
   .cal-day:nth-child(7n){border-right:none}
   .cal-day.other{opacity:1;background:#f2f4f7}
   .cal-day.other .dn{color:#69717c}
   .cal-day.sel{background:#eef5ff;box-shadow:inset 0 0 0 2px #9dc2ff}
-  .dn{width:100%;height:22px;margin:0 0 1px;border-radius:0;font-size:18px;font-weight:650;line-height:1;align-items:flex-start}
+  .dn{width:100%;height:22px;margin:0 0 1px;border-radius:0;font-size:var(--cal-date-size);font-weight:650;line-height:1;align-items:flex-start}
   .cal-day.today .dn{width:26px;height:26px;margin:0 auto;border-radius:50%;align-items:center}
   .task-stack{gap:3px;min-height:0}
-  .cal-task{border-radius:5px;padding:3px 4px;font-size:11.5px;line-height:1.1;font-weight:600;display:block;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;word-break:normal;min-height:17px}
+  .cal-task{border-radius:5px;padding:3px 4px;font-size:var(--cal-task-size);line-height:var(--cal-task-line);font-weight:600;display:block;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;word-break:normal;min-height:17px}
   .cal-task.cont-left{margin-left:-3px;padding-left:5px}
   .cal-task.cont-right{margin-right:-3px;padding-right:5px}
   .cal-task.day{background:#ffd166;color:#2f2500}
