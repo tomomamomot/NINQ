@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.02-4';
+const APP_VERSION = 'v2026.06.02-5';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -489,7 +489,10 @@ function calendarTaskClass(entry, ymd, dayOfWeek) {
 function renderAll() { applyDisplayPreferences(); renderNav(); renderHeaders(); renderCalendar(); renderDayEntries(); renderDesktopSheet(); renderSubScreen(); renderInvoiceScreen(); renderSettings(); renderSyncScreen(); renderReceiptScreen(); }
 function renderNav() {
   if (activeScreen === 'sub' && !subcontractEnabled()) activeScreen = 'cal';
-  if (activeScreen !== 'cal') { isDayModalOpen = false; isSheetPageOpen = false; }
+  if (activeScreen !== 'cal') {
+    isSheetPageOpen = false;
+    if (window.innerWidth < 900) isDayModalOpen = false;
+  }
   document.body.classList.toggle('sheet-mobile-open', activeScreen === 'cal' && isSheetPageOpen);
   document.body.classList.toggle('pc-calendar-pinned', activeScreen !== 'cal');
   document.querySelectorAll('.screen').forEach((el) => el.classList.remove('active', 'print-active'));
@@ -665,14 +668,14 @@ function renderDayEntries() {
   title.textContent = `${fmtDateJP(selectedDate)}（${weekdayLabel(selectedDate)}）`;
   if (!entries.length) {
     body.innerHTML = `<div class="day-mini-empty"><div class="empty" style="padding:22px 10px 8px"><div>この日の予定はありません</div><p>追加ボタンから登録できます。</p></div><button class="btn-primary" type="button" data-add-date="${selectedDate}">予定を追加</button></div>`;
-    modal.classList.toggle('open', activeScreen === 'cal' && isDayModalOpen);
+    modal.classList.toggle('open', isDayModalOpen);
     return;
   }
   body.innerHTML = `<div class="day-mini-list">${entries.map((entry) => {
     const isSub = entry.type === 'sub';
     return `<div class="day-mini-card ${shiftClass(entry.shift)} ${isSub ? 'sub' : ''}"><div class="day-mini-row"><div class="day-mini-main"><div class="day-mini-site">${escapeHtml(entry.site || '現場名未入力')}</div><div class="day-mini-company">${escapeHtml(entry.company || '会社名未入力')} ・ ${isSub ? escapeHtml(entry.workerName || '外注職人') : '自分'} ・ ${shiftLabel(entry.shift)}</div></div><div class="day-mini-side"><div class="pill ${isSub ? 'sub' : shiftClass(entry.shift)}">${isSub ? '外注' : shiftLabel(entry.shift)}</div>${renderEntryExpenseChips(entry)}</div></div><div class="day-mini-actions"><button class="day-mini-btn" type="button" data-edit-entry="${entry.id}">編集</button><button class="day-mini-btn del" type="button" data-del-entry="${entry.id}">削除</button></div></div>`;
   }).join('')}<button class="btn-primary" type="button" data-add-date="${selectedDate}">予定を追加</button></div>`;
-  modal.classList.toggle('open', activeScreen === 'cal' && isDayModalOpen);
+  modal.classList.toggle('open', isDayModalOpen);
 }
 
 function openDayModal(date) {
