@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.02-11';
+const APP_VERSION = 'v2026.06.03-1';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -1278,6 +1278,13 @@ function saveGoogleSettings({ feedback = true, render = true, touch = true } = {
   if (feedback) setSyncLog('Google設定を保存しました');
 }
 function setSyncLog(message) { const log = document.getElementById('sync-log'); if (log) log.textContent = message; }
+function isEditingSyncSensitiveField() {
+  const el = document.activeElement;
+  if (!el?.matches?.('input, textarea, select, [contenteditable="true"]')) return false;
+  if (el.closest('#sc-sync')) return false;
+  if (['checkbox', 'radio', 'file', 'button', 'submit'].includes(el.type || '')) return false;
+  return true;
+}
 function scheduleDriveAutoSync({ delay = 1200, message = '', reason = 'save' } = {}) {
   window.clearTimeout(driveSyncTimer);
   driveSyncTimer = null;
@@ -1294,7 +1301,14 @@ function scheduleDriveAutoSync({ delay = 1200, message = '', reason = 'save' } =
   saveSyncPending(true, reason);
   if (message) setSyncLog(message);
   else setSyncLog('端末内に保存しました。クラウドへ自動保存します...');
-  driveSyncTimer = window.setTimeout(() => syncGoogleDrive({ auto: true, reason }), delay);
+  const wait = isEditingSyncSensitiveField() ? Math.max(delay, 8000) : delay;
+  driveSyncTimer = window.setTimeout(() => {
+    if (isEditingSyncSensitiveField()) {
+      scheduleDriveAutoSync({ delay: 8000, reason });
+      return;
+    }
+    syncGoogleDrive({ auto: true, reason });
+  }, wait);
 }
 function localModifiedAt(targetState = state) {
   const dates = [
@@ -1564,6 +1578,10 @@ async function syncGoogleDrive({ auto = false, reason = '' } = {}) {
   if (activeScreen === 'st') flushSettingsAutosave();
   window.clearTimeout(driveSyncTimer);
   driveSyncTimer = null;
+  if (auto && isEditingSyncSensitiveField()) {
+    scheduleDriveAutoSync({ delay: 8000, reason });
+    return;
+  }
   if (auto && (!state.settings.googleSyncEnabled || !state.settings.googleClientId)) return;
   if (auto && !navigator.onLine) {
     saveSyncPending(true, reason || 'offline');

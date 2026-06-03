@@ -148,10 +148,10 @@
       #sc-cal .task-stack { overflow: visible !important; }
       #sc-cal .task-stack {
         display: grid !important;
-        grid-template-rows: repeat(4, minmax(0, 16px));
+        grid-template-rows: repeat(4, minmax(0, var(--cal-slot-height)));
         gap: 2px;
         align-content: start;
-        height: 70px;
+        height: var(--cal-stack-height);
         position: relative;
       }
       #sc-cal .cal-task,
@@ -167,9 +167,10 @@
         width: calc((100% + 13px) * var(--span, 1) - 13px);
         display: flex !important;
         align-items: center;
-        height: 16px;
-        min-height: 16px;
-        max-height: 16px;
+        height: var(--cal-slot-height);
+        min-height: var(--cal-slot-height);
+        max-height: var(--cal-slot-height);
+        font-size: var(--cal-task-size);
         white-space: nowrap !important;
         overflow: hidden !important;
         text-overflow: clip !important;
@@ -187,7 +188,7 @@
         margin-top: -2px;
         margin-bottom: 1px;
         color: var(--red);
-        font-size: 9px;
+        font-size: var(--holiday-name-size);
         line-height: 1;
         font-weight: 900;
         white-space: nowrap;
@@ -196,15 +197,15 @@
       }
       @media (max-width: 480px) {
         #sc-cal .task-stack {
-          grid-template-rows: repeat(4, minmax(0, 14px));
+          grid-template-rows: repeat(4, minmax(0, var(--cal-slot-height)));
           gap: 2px;
-          height: 62px;
+          height: var(--cal-stack-height);
         }
         #sc-cal .cal-task {
           width: calc((100% + 7px) * var(--span, 1) - 7px);
-          height: 14px;
-          min-height: 14px;
-          max-height: 14px;
+          height: var(--cal-slot-height);
+          min-height: var(--cal-slot-height);
+          max-height: var(--cal-slot-height);
           line-height: 1.08;
         }
         #sc-cal .cal-task,
@@ -213,7 +214,7 @@
         #sc-cal .cal-task.cont-left.cont-right {
           border-radius: 3px !important;
         }
-        #sc-cal .holiday-name { font-size: 8px; min-height: 10px; }
+        #sc-cal .holiday-name { font-size: max(8px, calc(var(--holiday-name-size) - 1px)); min-height: 10px; }
       }
     `;
     document.head.appendChild(style);

@@ -26,7 +26,7 @@
         min-height: 34px;
       }
       #sc-cal .topbar-title {
-        font-size: 18px;
+        font-size: calc(var(--modal-title-size) - 2px);
         line-height: 1;
       }
       #sc-cal .topbar-sub {
@@ -46,7 +46,7 @@
         background: rgba(255,255,255,.12);
         color: #fff;
         padding: 0;
-        font-size: 17px;
+        font-size: var(--control-size);
         font-weight: 900;
         line-height: 1;
       }
@@ -92,14 +92,14 @@
         min-height: 36px;
       }
       #sc-cal .sl {
-        font-size: 10px;
+        font-size: max(10px, calc(var(--summary-label-size) - 2px));
         line-height: 1.15;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
       #sc-cal .sv {
-        font-size: 17px;
+        font-size: max(17px, calc(var(--summary-value-size) - 5px));
         line-height: 1.1;
         margin-top: 3px;
         white-space: nowrap;
@@ -111,7 +111,7 @@
         border-radius: 10px;
         background: #fff;
         color: var(--accent);
-        font-size: 12px;
+        font-size: max(12px, calc(var(--summary-label-size) - 1px));
         font-weight: 900;
         min-height: 46px;
         padding: 0 6px;
@@ -130,12 +130,12 @@
           min-height: 32px;
         }
         #sc-cal .topbar-title {
-          font-size: 17px;
+          font-size: calc(var(--modal-title-size) - 3px);
         }
         #sc-cal .ghost-icon-btn {
           width: 36px;
           height: 32px;
-          font-size: 16px;
+          font-size: max(16px, calc(var(--control-size) - 1px));
         }
         #sc-cal .month-nav {
           padding: 8px 14px;
@@ -144,7 +144,7 @@
           height: 36px;
         }
         #sc-cal .month-label {
-          font-size: 24px;
+          font-size: var(--month-label-size);
         }
         #sc-cal .cal-grid {
           padding-bottom: 4px;
@@ -152,14 +152,14 @@
         #sc-cal .cal-dow {
           min-height: 24px;
           height: 24px;
-          font-size: 13px;
+          font-size: var(--cal-dow-size);
         }
         #sc-cal .cal-day {
           padding: 2px 3px 3px;
         }
         #sc-cal .dn {
           height: 19px;
-          font-size: 15px;
+          font-size: var(--cal-date-size);
         }
         #sc-cal .cal-day.today .dn {
           width: 23px;
@@ -168,8 +168,8 @@
         #sc-cal .cal-task {
           display: flex;
           align-items: center;
-          min-height: 21px;
-          font-size: 12px;
+          min-height: var(--cal-slot-height);
+          font-size: var(--cal-task-size);
           font-weight: 750;
           line-height: 1;
           padding: 2px 4px;
@@ -182,14 +182,14 @@
           padding: 6px 8px;
         }
         #sc-cal .sl {
-          font-size: 9.5px;
+          font-size: max(9.5px, calc(var(--summary-label-size) - 3px));
         }
         #sc-cal .sv {
-          font-size: 15.5px;
+          font-size: max(15.5px, calc(var(--summary-value-size) - 7px));
         }
         #sc-cal .summary-detail-toggle {
           min-height: 42px;
-          font-size: 11px;
+          font-size: max(11px, calc(var(--summary-label-size) - 2px));
         }
         #sc-cal .fab {
           width: 54px;
