@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json?v=35">
 <link rel="icon" href="icon-192.png?v=34">
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=34">
-  <link rel="stylesheet" href="styles.css?v=61">
+  <link rel="stylesheet" href="styles.css?v=62">
 </head>
 <body>
 <div id="sc-cal" class="screen active">
@@ -115,6 +115,15 @@
         <input id="st-company-day-new" class="st-input" type="number" inputmode="numeric" placeholder="日勤単価">
         <input id="st-company-night-new" class="st-input" type="number" inputmode="numeric" placeholder="夜勤単価">
         <input id="st-company-ot-new" class="st-input" type="number" inputmode="numeric" placeholder="残業単価">
+        <select id="st-company-closing-new" class="st-select" aria-label="締め日">
+          <option value="0">月末締め</option>
+          <option value="5">5日締め</option>
+          <option value="10">10日締め</option>
+          <option value="15">15日締め</option>
+          <option value="20">20日締め</option>
+          <option value="25">25日締め</option>
+          <option value="31">31日締め</option>
+        </select>
         <button class="mini-add-btn" type="button" id="add-company-btn">追加</button>
       </div>
       <div class="company-rate-list" id="st-company-list"></div>
@@ -312,7 +321,7 @@
   </div>
 </div>
 
-  <script src="app.js?v=87"></script>
+  <script src="app.js?v=88"></script>
 <script src="settings-polish.js?v=1"></script>
 </body>
 </html>

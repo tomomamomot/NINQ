@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.03-1';
+const APP_VERSION = 'v2026.06.04-1';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -101,12 +101,24 @@ function normalizeExpenseItems(items) {
   const mapped = list.map((item, index) => typeof item === 'string' ? { id: `exp${index + 1}`, label: item } : { id: item.id || `exp${index + 1}`, label: item.label || `項目${index + 1}` }).filter((item) => item.label.trim());
   return mapped.length ? mapped : clone(DEFAULT_SETTINGS.expenseItems);
 }
+function closingDayValue(value) {
+  const day = Math.trunc(num(value));
+  return day >= 1 && day <= 31 ? day : 0;
+}
+function closingDayLabel(value) { return closingDayValue(value) ? `${closingDayValue(value)}日締め` : '月末締め'; }
+function closingDayOptions(selected = 0) {
+  const current = closingDayValue(selected);
+  return [`<option value="0" ${current === 0 ? 'selected' : ''}>月末締め</option>`, ...Array.from({ length: 31 }, (_, index) => {
+    const day = index + 1;
+    return `<option value="${day}" ${current === day ? 'selected' : ''}>${day}日締め</option>`;
+  })].join('');
+}
 function normalizeCompanyRates(items, companies = []) {
   const source = Array.isArray(items) ? items : [];
   const mapped = source.map((item) => {
-    if (typeof item === 'string') return { id: crypto.randomUUID(), name: item, officialName: item, dayRate: 0, nightRate: 0, otRate: 0 };
+    if (typeof item === 'string') return { id: crypto.randomUUID(), name: item, officialName: item, dayRate: 0, nightRate: 0, otRate: 0, closingDay: 0 };
     const name = String(item.name || item.company || '').trim();
-    return { id: String(item.id || crypto.randomUUID()), name, officialName: String(item.officialName || item.formalName || name).trim(), dayRate: num(item.dayRate), nightRate: num(item.nightRate), otRate: num(item.otRate) };
+    return { id: String(item.id || crypto.randomUUID()), name, officialName: String(item.officialName || item.formalName || name).trim(), dayRate: num(item.dayRate), nightRate: num(item.nightRate), otRate: num(item.otRate), closingDay: closingDayValue(item.closingDay) };
   }).filter((item) => item.name);
   const deduped = [];
   mapped.forEach((item) => {
@@ -116,11 +128,12 @@ function normalizeCompanyRates(items, companies = []) {
       existing.dayRate = item.dayRate || existing.dayRate;
       existing.nightRate = item.nightRate || existing.nightRate;
       existing.otRate = item.otRate || existing.otRate;
+      existing.closingDay = closingDayValue(item.closingDay);
     } else {
       deduped.push(item);
     }
   });
-  companies.filter(Boolean).forEach((name) => { if (!deduped.some((item) => item.name === name)) deduped.push({ id: crypto.randomUUID(), name, officialName: name, dayRate: 0, nightRate: 0, otRate: 0 }); });
+  companies.filter(Boolean).forEach((name) => { if (!deduped.some((item) => item.name === name)) deduped.push({ id: crypto.randomUUID(), name, officialName: name, dayRate: 0, nightRate: 0, otRate: 0, closingDay: 0 }); });
   return deduped;
 }
 function normalizeReceipt(receipt) {
@@ -152,7 +165,7 @@ function migrateLegacy(oldData) {
     invoiceNo: oldSettings.invno || '', invoiceEnabled: oldSettings.showInv !== false, taxRate: num(oldSettings.taxRate || 10),
     defaultDayRate: num(oldSettings.tanka || 0), defaultNightRate: num(oldSettings.ntanka || 0), defaultOtRate: num(oldSettings.ottanka || 0),
     companies: [...new Set((oldData.entries || []).map((entry) => entry.co).filter(Boolean))],
-    companyRates: [...new Set((oldData.entries || []).map((entry) => entry.co).filter(Boolean))].map((name) => ({ id: crypto.randomUUID(), name, officialName: name, dayRate: num(oldSettings.tanka || 0), nightRate: num(oldSettings.ntanka || 0), otRate: num(oldSettings.ottanka || 0) })),
+    companyRates: [...new Set((oldData.entries || []).map((entry) => entry.co).filter(Boolean))].map((name) => ({ id: crypto.randomUUID(), name, officialName: name, dayRate: num(oldSettings.tanka || 0), nightRate: num(oldSettings.ntanka || 0), otRate: num(oldSettings.ottanka || 0), closingDay: 0 })),
   };
   migrated.entries = (oldData.entries || []).map((entry) => ({
     id: String(entry.id || crypto.randomUUID()), date: toYmd(new Date(entry.y, entry.m, entry.d)), type: entry.type || 'self',
@@ -296,6 +309,23 @@ function companyOptions() { return companyPresets().map((item) => item.name).sor
 function companyPresets() { return normalizeCompanyRates(state.settings.companyRates, state.settings.companies); }
 function companyPresetByName(name) { return companyPresets().find((item) => item.name === name); }
 function companyOfficialName(name) { return companyPresetByName(name)?.officialName || name; }
+function companyClosingDay(name) { return closingDayValue(companyPresetByName(name)?.closingDay); }
+function companyBillingRange(name, baseDate = cursor) {
+  const closingDay = companyClosingDay(name);
+  const year = baseDate.getFullYear();
+  const month = baseDate.getMonth();
+  const monthLast = new Date(year, month + 1, 0);
+  const end = closingDay ? new Date(year, month, Math.min(closingDay, monthLast.getDate())) : monthLast;
+  const previousMonthLast = new Date(year, month, 0);
+  const previousEnd = closingDay ? new Date(previousMonthLast.getFullYear(), previousMonthLast.getMonth(), Math.min(closingDay, previousMonthLast.getDate())) : previousMonthLast;
+  const start = new Date(previousEnd);
+  start.setDate(start.getDate() + 1);
+  return { start: toYmd(start), end: toYmd(end), closingDay };
+}
+function companyBillingPeriodLabel(name) {
+  const range = companyBillingRange(name);
+  return `${fmtDateJP(range.start)}〜${fmtDateJP(range.end)}（${closingDayLabel(range.closingDay)}）`;
+}
 function rateForPresetShift(preset, shift) { if (!preset) return 0; return shift === 'night' ? num(preset.nightRate) : num(preset.dayRate); }
 function subcontractEnabled() { return state.settings.showSubcontract !== false; }
 function yearEntries() { const year = cursor.getFullYear(); return state.entries.filter((entry) => fromYmd(entry.date).getFullYear() === year); }
@@ -321,7 +351,7 @@ function companyRateText(preset) {
   if (num(preset.dayRate)) parts.push(`日 ${yen(preset.dayRate)}`);
   if (num(preset.nightRate)) parts.push(`夜 ${yen(preset.nightRate)}`);
   if (num(preset.otRate)) parts.push(`残 ${yen(preset.otRate)}`);
-  return parts.join(' / ') || '単価未設定';
+  return `${parts.join(' / ') || '単価未設定'} / ${closingDayLabel(preset.closingDay)}`;
 }
 function renderCompanyPresetList() {
   const list = document.getElementById('st-company-list'); if (!list) return;
@@ -334,6 +364,7 @@ function renderCompanyPresetList() {
         <input class="st-input" type="number" inputmode="numeric" data-company-preset-field="dayRate" data-company-preset-id="${escapeHtml(preset.id)}" value="${rateFieldValue(preset.dayRate)}" placeholder="日勤">
         <input class="st-input" type="number" inputmode="numeric" data-company-preset-field="nightRate" data-company-preset-id="${escapeHtml(preset.id)}" value="${rateFieldValue(preset.nightRate)}" placeholder="夜勤">
         <input class="st-input" type="number" inputmode="numeric" data-company-preset-field="otRate" data-company-preset-id="${escapeHtml(preset.id)}" value="${rateFieldValue(preset.otRate)}" placeholder="残業">
+        <select class="st-select company-closing-select" data-company-preset-field="closingDay" data-company-preset-id="${escapeHtml(preset.id)}" aria-label="締め日">${closingDayOptions(preset.closingDay)}</select>
       </div>
       <button type="button" data-remove-company-preset="${index}" aria-label="削除">×</button>
     </div>`).join('') : '<div class="empty-inline">まだ登録がありません</div>';
@@ -370,6 +401,7 @@ function mergeCompanyPresetLists(localSettings, remoteSettings) {
       dayRate: num(preferred.dayRate) || num(fallback.dayRate),
       nightRate: num(preferred.nightRate) || num(fallback.nightRate),
       otRate: num(preferred.otRate) || num(fallback.otRate),
+      closingDay: closingDayValue(preferred.closingDay),
       _time: Math.max(existing._time || 0, sourceTime || 0),
     });
   };
@@ -424,9 +456,10 @@ function addCompanyPreset() {
   const nameInput = document.getElementById('st-company-new'); if (!nameInput) return;
   const name = nameInput.value.trim(); if (!name) return;
   const next = companyPresetValues().filter((item) => item.name !== name);
-  next.push({ id: crypto.randomUUID(), name, officialName: document.getElementById('st-company-official-new')?.value.trim() || name, dayRate: num(document.getElementById('st-company-day-new')?.value), nightRate: num(document.getElementById('st-company-night-new')?.value), otRate: num(document.getElementById('st-company-ot-new')?.value) });
+  next.push({ id: crypto.randomUUID(), name, officialName: document.getElementById('st-company-official-new')?.value.trim() || name, dayRate: num(document.getElementById('st-company-day-new')?.value), nightRate: num(document.getElementById('st-company-night-new')?.value), otRate: num(document.getElementById('st-company-ot-new')?.value), closingDay: closingDayValue(document.getElementById('st-company-closing-new')?.value) });
   writeCompanyPresetValues(next);
   ['st-company-new', 'st-company-official-new', 'st-company-day-new', 'st-company-night-new', 'st-company-ot-new'].forEach((id) => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const closing = document.getElementById('st-company-closing-new'); if (closing) closing.value = '0';
   renderCompanyPresetList();
   scheduleSettingsAutosave({ immediate: true, section: 'companies' });
 }
@@ -480,7 +513,17 @@ function sortEntriesForDemen(a, b) {
 }
 function typeLabel(type) { return type === 'sub' ? '外注' : '自分'; }
 function pickSelectedCompany() { const companies = getInvoiceCompanies(); if (!companies.length) { selectedCompany = ''; return companies; } if (!companies.includes(selectedCompany)) selectedCompany = companies[0]; return companies; }
-function getInvoiceCompanies() { return [...new Set(monthEntries().filter((entry) => entry.type === 'self').map((entry) => entry.company).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ja')); }
+function entriesForInvoiceCompanyName(company) {
+  const range = companyBillingRange(company);
+  return state.entries
+    .filter((entry) => entry.type === 'self' && entry.company === company && entry.date >= range.start && entry.date <= range.end)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+function getInvoiceCompanies() {
+  return [...new Set(state.entries.filter((entry) => entry.type === 'self').map((entry) => entry.company).filter(Boolean))]
+    .filter((company) => entriesForInvoiceCompanyName(company).length)
+    .sort((a, b) => a.localeCompare(b, 'ja'));
+}
 function companyInvoiceMode(company) { return state.settings.companyInvoiceModes?.[company] || 'with'; }
 function setCompanyInvoiceMode(company, mode) { state.settings.companyInvoiceModes[company] = mode; saveState(); }
 function companyEventTitle(entry) { return [entry.company, entry.site].filter(Boolean).join(' / ') || '現場予定'; }
@@ -839,11 +882,11 @@ function renderSubScreen() {
 }
 const DEMEN_EXPENSE_LABELS = ['交通費', '駐車場代', '宿泊代', 'ガソリン代', '資材等', '他諸経費'];
 function invoiceDateLabel() {
-  const last = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
-  return `${last.getFullYear()}年${last.getMonth() + 1}月${last.getDate()}日`;
+  const end = fromYmd(companyBillingRange(selectedCompany).end);
+  return `${end.getFullYear()}年${end.getMonth() + 1}月${end.getDate()}日`;
 }
 function entriesForInvoiceCompany() {
-  return monthEntries().filter((entry) => entry.type === 'self' && entry.company === selectedCompany);
+  return entriesForInvoiceCompanyName(selectedCompany);
 }
 function invoiceTotals(entries) {
   const rows = entries.map((entry) => ({ entry, calc: calcEntry(entry) }));
@@ -882,6 +925,7 @@ function buildInvoiceSheet(entries, totals, hidden) {
       <div class="invoice-sheet invoice-size-${invoiceFontSize}" id="print-invoice-box">
         <div class="invoice-title">御　請　求　書</div>
         <div class="invoice-date">${invoiceDateLabel()}</div>
+        <div class="invoice-period">対象期間：${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</div>
         <div class="invoice-to"><span>${escapeHtml(invoiceCompany)}</span><b>御中</b></div>
         <div class="invoice-message">　　下記のとおりご請求申し上げます</div>
         <div class="invoice-sender">
@@ -933,7 +977,9 @@ function dayInvoiceSummary(entries, day, expenseColumns) {
 function buildDemenSheet(entries, totals, hidden) {
   const expenseColumns = totals.expenses;
   const demenFontSize = fontSizeLevel(state.settings.invoiceFontSize);
-  const days = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
+  const billingRange = companyBillingRange(selectedCompany);
+  const billingDates = dateList(billingRange.start, billingRange.end);
+  const spansMonths = monthKey(billingRange.start) !== monthKey(billingRange.end);
   const expenseHeaders = `${DEMEN_EXPENSE_LABELS.map((label) => `<th>${escapeHtml(label)}</th>`).join('')}<th>金　額</th>`;
   const demenRow = (day, entry = null, dayRowspan = 1) => {
     const dayCell = day === null ? '' : `<td class="demen-day-cell" ${dayRowspan > 1 ? `rowspan="${dayRowspan}"` : ''}>${day}</td>`;
@@ -943,10 +989,11 @@ function buildDemenSheet(entries, totals, hidden) {
     const siteClass = entry.shift === 'night' ? 'left demen-night-site' : 'left';
     return `<tr class="${entry.shift === 'night' ? 'demen-night-row' : ''}">${dayCell}<td class="${siteClass}">${escapeHtml(entry.site || '')}</td><td>${calc.qty || ''}</td><td class="right">${calc.unitRate ? yenPlain(calc.unitRate, hidden) : ''}</td><td class="right">${calc.labor ? yenPlain(calc.labor, hidden) : ''}</td><td>${calc.otHours || ''}</td><td class="right">${calc.otRate ? yenPlain(calc.otRate, hidden) : ''}</td><td class="right">${calc.overtime ? yenPlain(calc.overtime, hidden) : ''}</td>${expenses.map((value) => `<td class="right">${value ? yenPlain(value, hidden) : ''}</td>`).join('')}<td class="right">${calc.subtotal ? yenPlain(calc.subtotal, hidden) : ''}</td></tr>`;
   };
-  const bodyRows = Array.from({ length: days }, (_, index) => {
-    const day = index + 1;
+  const bodyRows = billingDates.map((date) => {
+    const parsed = fromYmd(date);
+    const day = spansMonths ? `${parsed.getMonth() + 1}/${parsed.getDate()}` : parsed.getDate();
     const dayItems = entries
-      .filter((entry) => Number(entry.date.slice(8, 10)) === day)
+      .filter((entry) => entry.date === date)
       .sort(sortEntriesForDemen);
     return dayItems.length ? dayItems.map((entry, entryIndex) => demenRow(entryIndex === 0 ? day : null, entry, dayItems.length)).join('') : demenRow(day);
   }).join('');
@@ -954,7 +1001,7 @@ function buildDemenSheet(entries, totals, hidden) {
     <div class="tbl-wrap demen-sheet-wrap demen-size-${demenFontSize}" id="print-demen-wrap">
       <table class="demen demen-sheet demen-size-${demenFontSize}">
         <thead>
-          <tr class="demen-title-row"><th colspan="4" class="demen-title-spacer"></th><th class="demen-title-main">${cursor.getMonth() + 1}</th><th colspan="3" class="left demen-title-main">月 出面表</th><th colspan="5"></th><th class="right demen-title-name">氏名：</th><th class="demen-title-name">${escapeHtml(state.settings.name || '')}</th></tr>
+          <tr class="demen-title-row"><th colspan="4" class="demen-title-spacer"></th><th class="demen-title-main">${cursor.getMonth() + 1}</th><th colspan="3" class="left demen-title-main">月 出面表</th><th colspan="5" class="demen-period">${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</th><th class="right demen-title-name">氏名：</th><th class="demen-title-name">${escapeHtml(state.settings.name || '')}</th></tr>
           <tr><th>日</th><th>現場名</th><th>人工</th><th>人工単価</th><th>人工合計</th><th>残業h</th><th>残業単価</th><th>残業合計</th>${expenseHeaders}</tr>
         </thead>
         <tbody>${bodyRows}</tbody>
@@ -975,7 +1022,7 @@ function renderInvoiceScreen() {
   const totals = invoiceTotals(entries);
   const hidden = !state.settings.showSales;
   const invoiceFontSize = fontSizeLevel(state.settings.invoiceFontSize);
-  body.innerHTML = `<div class="invoice-tool-row"><label>請求書フォント<select id="invoice-font-size-select">${fontSizeOptions(invoiceFontSize)}</select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
+  body.innerHTML = `<div class="invoice-tool-row"><span class="billing-period-label">${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</span><label>請求書フォント<select id="invoice-font-size-select">${fontSizeOptions(invoiceFontSize)}</select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
 }
 function expenseTotals(entries) {
   return expenseItems().map((item) => ({
@@ -1032,6 +1079,8 @@ function renderSettings() {
   Object.entries(map).forEach(([id, value]) => { const el = document.getElementById(id); if (el) el.value = value ?? ''; });
   document.getElementById('st-tax').value = String(s.taxRate);
   const presets = normalizeCompanyRates(s.companyRates, s.companies);
+  const newClosingDay = document.getElementById('st-company-closing-new');
+  if (newClosingDay) newClosingDay.innerHTML = closingDayOptions(newClosingDay.value);
   document.getElementById('st-companies').value = presets.map((item) => item.name).join('\n');
   const companyPresetStore = document.getElementById('st-company-presets'); if (companyPresetStore) companyPresetStore.value = JSON.stringify(presets);
   document.getElementById('st-expenses').value = expenseItems().map((item) => item.label).join('\n');
@@ -2150,7 +2199,7 @@ function csvCell(value) { const text = String(value ?? ''); return `"${text.repl
 function downloadCsv(filename, rows) { const csv = `\ufeff${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}`; const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; link.click(); URL.revokeObjectURL(link.href); }
 function exportDemenCsv() {
   const rows = [['日付', '会社名', '現場名', '区分', '人工', '単価', '人工計', '残業h', '残業計', ...expenseItems().map((item) => item.label), '合計']];
-  monthEntries().filter((entry) => entry.type === 'self' && entry.company === selectedCompany).forEach((entry) => {
+  entriesForInvoiceCompany().forEach((entry) => {
     const calc = calcEntry(entry);
     rows.push([entry.date, entry.company, entry.site, shiftLabel(entry.shift), calc.qty, calc.unitRate, calc.labor, calc.otHours, calc.overtime, ...expenseItems().map((item) => num(entry.expenses?.[item.id])), calc.subtotal]);
   });
@@ -2166,7 +2215,7 @@ function exportSubPaymentsCsv() {
 }
 function exportInvoiceCsv() {
   const totals = invoiceTotals(entriesForInvoiceCompany());
-  downloadCsv(`${monthKey(cursor)}_${selectedCompany}_請求書.csv`, [['請求先', companyOfficialName(selectedCompany)], ['対象月', fmtMonth(cursor)], ['売上（税別）', totals.subtotal], ['消費税', totals.tax], ['諸経費', totals.expenseTotal], ['合計', totals.total]]);
+  downloadCsv(`${monthKey(cursor)}_${selectedCompany}_請求書.csv`, [['請求先', companyOfficialName(selectedCompany)], ['対象月', fmtMonth(cursor)], ['対象期間', companyBillingPeriodLabel(selectedCompany)], ['売上（税別）', totals.subtotal], ['消費税', totals.tax], ['諸経費', totals.expenseTotal], ['合計', totals.total]]);
 }
 function printView(kind) {
   const screen = document.getElementById('sc-inv');
@@ -2422,6 +2471,10 @@ function bindEvents() {
       saveState();
       renderInvoiceScreen();
       scheduleDriveAutoSync({ message: '請求書フォント設定をクラウドへ保存します...' });
+      return;
+    }
+    if (event.target.matches('[data-company-preset-field="closingDay"]')) {
+      updateCompanyPresetField(event.target.dataset.companyPresetId, 'closingDay', event.target.value);
       return;
     }
     if (event.target.matches('#st-tax,#st-invoice-font-size')) { scheduleSettingsAutosave({ immediate: true, section: 'invoice' }); return; }
