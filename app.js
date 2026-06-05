@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.04-1';
+const APP_VERSION = 'v2026.06.05-1';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
@@ -512,15 +512,16 @@ function sortEntriesForDemen(a, b) {
     || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
 }
 function typeLabel(type) { return type === 'sub' ? '外注' : '自分'; }
+function invoiceBillableEntry(entry) { return entry.type === 'self' || entry.type === 'sub'; }
 function pickSelectedCompany() { const companies = getInvoiceCompanies(); if (!companies.length) { selectedCompany = ''; return companies; } if (!companies.includes(selectedCompany)) selectedCompany = companies[0]; return companies; }
 function entriesForInvoiceCompanyName(company) {
   const range = companyBillingRange(company);
   return state.entries
-    .filter((entry) => entry.type === 'self' && entry.company === company && entry.date >= range.start && entry.date <= range.end)
+    .filter((entry) => invoiceBillableEntry(entry) && entry.company === company && entry.date >= range.start && entry.date <= range.end)
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 function getInvoiceCompanies() {
-  return [...new Set(state.entries.filter((entry) => entry.type === 'self').map((entry) => entry.company).filter(Boolean))]
+  return [...new Set(state.entries.filter(invoiceBillableEntry).map((entry) => entry.company).filter(Boolean))]
     .filter((company) => entriesForInvoiceCompanyName(company).length)
     .sort((a, b) => a.localeCompare(b, 'ja'));
 }
@@ -1016,7 +1017,7 @@ function renderInvoiceScreen() {
   const tabs = document.getElementById('co-tabs');
   const body = document.getElementById('inv-body');
   const companies = pickSelectedCompany();
-  if (!companies.length) { tabs.innerHTML = ''; body.innerHTML = `<div class="empty"><div class="icon">🧾</div><div>この月の請求対象はまだありません</div><p>自分の予定を入力するとここに会社別帳票が出ます。</p></div>`; return; }
+  if (!companies.length) { tabs.innerHTML = ''; body.innerHTML = `<div class="empty"><div class="icon">🧾</div><div>この月の請求対象はまだありません</div><p>自分または外注の予定を入力するとここに会社別帳票が出ます。</p></div>`; return; }
   tabs.innerHTML = companies.map((company) => `<button class="co-chip ${company === selectedCompany ? 'active' : ''}" data-company="${escapeHtml(company)}">${escapeHtml(company)}</button>`).join('');
   const entries = entriesForInvoiceCompany();
   const totals = invoiceTotals(entries);
