@@ -5,8 +5,12 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.05-1';
+const APP_VERSION = 'v2026.06.08-1';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
+const TESSERACT_CORE_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js';
+const TESSERACT_LANG_URL = 'https://tessdata.projectnaptha.com/4.0.0';
+const RECEIPT_OCR_TIMEOUT_MS = 90000;
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
@@ -141,7 +145,7 @@ function normalizeReceipt(receipt) {
     id: String(receipt.id || crypto.randomUUID()), fileName: receipt.fileName || '領収書', importedAt: receipt.importedAt || new Date().toISOString(),
     category: receipt.category || guessReceiptCategory(`${receipt.fileName || ''} ${receipt.ocrText || ''}`),
     amount: num(receipt.amount || 0), date: receipt.date || '', vendor: receipt.vendor || '',
-    ocrText: receipt.ocrText || '', status: receipt.status || '未確認', updatedAt: receipt.updatedAt || receipt.importedAt || new Date().toISOString()
+    ocrText: receipt.ocrText || '', imageData: receipt.imageData || '', status: receipt.status || '未確認', updatedAt: receipt.updatedAt || receipt.importedAt || new Date().toISOString()
   };
 }
 function normalizeEntry(entry) {
@@ -1035,6 +1039,30 @@ function renderExpenseRows(title, rows) {
   if (!rows.length) return `<div class="expense-group"><div class="expense-group-title">${escapeHtml(title)}</div><div class="expense-empty">経費入力なし</div></div>`;
   return `<div class="expense-group"><div class="expense-group-title">${escapeHtml(title)}</div>${rows.map((row) => `<div class="expense-row"><span>${escapeHtml(row.label)}</span><strong>${yen(row.total, !state.settings.showSales)}</strong></div>`).join('')}</div>`;
 }
+function receiptCardHtml(receipt) {
+  const thumbnail = receipt.imageData ? `<img class="receipt-thumb" src="${receipt.imageData}" alt="領収書写真">` : '<div class="receipt-thumb empty">写真なし</div>';
+  const ocrText = receipt.ocrText ? `<details class="receipt-ocr"><summary>OCR文字</summary><pre>${escapeHtml(receipt.ocrText.slice(0, 900))}</pre></details>` : '';
+  return `<div class="receipt-card">
+    <div class="receipt-main">
+      ${thumbnail}
+      <div class="receipt-main-text">
+        <div class="receipt-name">${escapeHtml(receipt.vendor || receipt.fileName || '領収書')}</div>
+        <div class="receipt-meta">${escapeHtml(receipt.status || '未確認')} ・ ${escapeHtml((receipt.importedAt || '').slice(0, 10))}</div>
+      </div>
+    </div>
+    <div class="receipt-fields">
+      <input class="receipt-date" type="date" data-receipt-date="${receipt.id}" value="${escapeHtml(receipt.date || '')}">
+      <input class="receipt-amount" type="number" inputmode="numeric" min="0" step="1" data-receipt-amount="${receipt.id}" value="${num(receipt.amount) || ''}" placeholder="金額">
+    </div>
+    <select class="receipt-select" data-receipt-category="${receipt.id}">${expenseItems().map((item) => `<option value="${escapeHtml(item.label)}" ${item.label === receipt.category ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select>
+    ${ocrText}
+    <div class="receipt-actions">
+      <button class="btn-secondary receipt-apply" type="button" data-apply-receipt="${receipt.id}">予定へ入力</button>
+      <button class="btn-secondary receipt-retry" type="button" data-ocr-retry="${receipt.id}">再読み取り</button>
+    </div>
+    <button class="receipt-del" type="button" data-del-receipt="${receipt.id}">×</button>
+  </div>`;
+}
 function syncStatusText() {
   const pending = loadSyncPending();
   if (!navigator.onLine) return pending.pending ? 'オフライン・未送信あり' : 'オフライン';
@@ -1072,7 +1100,7 @@ function renderReceiptScreen() {
   const body = document.getElementById('receipt-body'); if (!body) return;
   const receipts = state.receipts || [];
   if (!receipts.length) { body.innerHTML = '<div class="empty"><div>領収書はまだありません</div></div>'; return; }
-  body.innerHTML = '<div class="receipt-list">' + receipts.map((receipt) => `<div class="receipt-card"><div class="receipt-main"><div class="receipt-name">${escapeHtml(receipt.vendor || receipt.fileName || '領収書')}</div><div class="receipt-meta">${escapeHtml(receipt.status)} ・ ${escapeHtml((receipt.importedAt || '').slice(0, 10))}</div></div><div class="receipt-fields"><input class="receipt-date" type="date" data-receipt-date="${receipt.id}" value="${escapeHtml(receipt.date || '')}"><input class="receipt-amount" type="number" inputmode="numeric" min="0" step="1" data-receipt-amount="${receipt.id}" value="${num(receipt.amount) || ''}" placeholder="金額"></div><select class="receipt-select" data-receipt-category="${receipt.id}">${expenseItems().map((item) => `<option value="${escapeHtml(item.label)}" ${item.label === receipt.category ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select>${receipt.ocrText ? `<details class="receipt-ocr"><summary>OCR文字</summary><pre>${escapeHtml(receipt.ocrText.slice(0, 900))}</pre></details>` : ''}<button class="btn-secondary receipt-apply" type="button" data-apply-receipt="${receipt.id}">予定へ入力</button><button class="receipt-del" type="button" data-del-receipt="${receipt.id}">×</button></div>`).join('') + '</div>';
+  body.innerHTML = '<div class="receipt-list">' + receipts.map(receiptCardHtml).join('') + '</div>';
 }
 function renderSettings() {
   const s = state.settings;
@@ -2005,6 +2033,13 @@ function receiptPatchFromOcr(text, fileName) {
     status: 'OCR候補',
   };
 }
+function withTimeout(promise, ms, message) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = window.setTimeout(() => reject(new Error(message)), ms); }),
+  ]).finally(() => window.clearTimeout(timer));
+}
 function loadTesseract() {
   if (window.Tesseract) return Promise.resolve(window.Tesseract);
   return new Promise((resolve, reject) => {
@@ -2014,64 +2049,127 @@ function loadTesseract() {
     script.src = TESSERACT_URL;
     script.async = true;
     script.dataset.tesseract = 'true';
-    script.onload = () => resolve(window.Tesseract);
+    script.onload = () => window.Tesseract ? resolve(window.Tesseract) : reject(new Error('OCRライブラリの起動に失敗しました'));
     script.onerror = () => reject(new Error('OCRライブラリを読み込めませんでした'));
     document.head.appendChild(script);
   });
 }
-function preprocessReceiptImage(file) {
+function loadImageElement(source) {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    const url = URL.createObjectURL(file);
+    const isBlob = source instanceof Blob;
+    const url = isBlob ? URL.createObjectURL(source) : String(source || '');
     img.onload = () => {
-      const maxWidth = 1600;
-      const scale = Math.min(1, maxWidth / img.width);
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(img.width * scale));
-      canvas.height = Math.max(1, Math.round(img.height * scale));
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      for (let i = 0; i < image.data.length; i += 4) {
-        const gray = (image.data[i] * 0.299) + (image.data[i + 1] * 0.587) + (image.data[i + 2] * 0.114);
-        const value = gray > 185 ? 255 : Math.max(0, gray - 18);
-        image.data[i] = value; image.data[i + 1] = value; image.data[i + 2] = value;
-      }
-      ctx.putImageData(image, 0, 0);
-      URL.revokeObjectURL(url);
-      resolve(canvas);
+      if (isBlob) URL.revokeObjectURL(url);
+      resolve(img);
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
+    img.onerror = () => { if (isBlob) URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
     img.src = url;
   });
 }
-async function runReceiptOcr(receiptId, file) {
-  if (!(file.type || '').startsWith('image/')) { updateReceiptField(receiptId, { status: 'OCR対象外（画像のみ）' }); renderReceiptScreen(); return; }
+async function createReceiptImageData(file) {
+  const img = await loadImageElement(file);
+  const maxWidth = 1200;
+  const scale = Math.min(1, maxWidth / img.width);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(img.width * scale));
+  canvas.height = Math.max(1, Math.round(img.height * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.78);
+}
+async function preprocessReceiptImage(source) {
+  const img = await loadImageElement(source);
+  const maxWidth = 1500;
+  const scale = Math.min(1, maxWidth / img.width);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(img.width * scale));
+  canvas.height = Math.max(1, Math.round(img.height * scale));
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < image.data.length; i += 4) {
+    const gray = (image.data[i] * 0.299) + (image.data[i + 1] * 0.587) + (image.data[i + 2] * 0.114);
+    const value = Math.max(0, Math.min(255, ((gray - 128) * 1.35) + 128));
+    image.data[i] = value; image.data[i + 1] = value; image.data[i + 2] = value;
+  }
+  ctx.putImageData(image, 0, 0);
+  return canvas;
+}
+function receiptOcrOptions(receiptId) {
+  let lastPct = -1;
+  return {
+    workerPath: TESSERACT_WORKER_URL,
+    corePath: TESSERACT_CORE_URL,
+    langPath: TESSERACT_LANG_URL,
+    logger: (progress) => {
+      const pct = Math.round((progress.progress || 0) * 100);
+      if (progress.status === 'recognizing text' && pct >= lastPct + 10) {
+        lastPct = pct;
+        updateReceiptField(receiptId, { status: `OCR ${pct}%` });
+        renderReceiptScreen();
+      } else if (progress.status && pct === 0 && lastPct < 0) {
+        updateReceiptField(receiptId, { status: `OCR準備中` });
+        renderReceiptScreen();
+      }
+    },
+  };
+}
+async function recognizeReceiptImage(Tesseract, image, receiptId) {
   try {
-    updateReceiptField(receiptId, { status: 'OCR読み取り中' });
+    return await withTimeout(Tesseract.recognize(image, 'jpn+eng', receiptOcrOptions(receiptId)), RECEIPT_OCR_TIMEOUT_MS, 'OCRが時間切れになりました');
+  } catch (error) {
+    updateReceiptField(receiptId, { status: '日本語OCR失敗、英数字で再試行' });
+    renderReceiptScreen();
+    return withTimeout(Tesseract.recognize(image, 'eng', receiptOcrOptions(receiptId)), RECEIPT_OCR_TIMEOUT_MS, error.message || 'OCR失敗');
+  }
+}
+async function runReceiptOcr(receiptId, source, fileName = '') {
+  if (!source) { updateReceiptField(receiptId, { status: '画像がありません' }); renderReceiptScreen(); return; }
+  if (source instanceof File && !(source.type || '').startsWith('image/')) { updateReceiptField(receiptId, { status: 'OCR対象外（画像のみ）' }); renderReceiptScreen(); return; }
+  try {
+    updateReceiptField(receiptId, { status: 'OCR画像調整中' });
     renderReceiptScreen();
     const Tesseract = await loadTesseract();
-    const image = await preprocessReceiptImage(file);
-    const result = await Tesseract.recognize(image, 'jpn+eng', {
-      logger: (progress) => {
-        if (progress.status === 'recognizing text') {
-          const pct = Math.round((progress.progress || 0) * 100);
-          updateReceiptField(receiptId, { status: `OCR ${pct}%` });
-          renderReceiptScreen();
-        }
-      },
-    });
-    updateReceiptField(receiptId, receiptPatchFromOcr(result.data?.text || '', file.name));
+    const image = await preprocessReceiptImage(source);
+    const result = await recognizeReceiptImage(Tesseract, image, receiptId);
+    updateReceiptField(receiptId, receiptPatchFromOcr(result.data?.text || '', fileName));
   } catch (error) {
-    updateReceiptField(receiptId, { status: error.message || 'OCR失敗' });
+    updateReceiptField(receiptId, { status: `${error.message || 'OCR失敗'}・手入力してください` });
   }
   renderReceiptScreen();
   scheduleDriveAutoSync({ message: '領収書OCR候補を保存しました' });
 }
-async function runReceiptOcrQueue(receipts, files) {
+async function runReceiptImportQueue(receipts, files) {
   for (let index = 0; index < receipts.length; index += 1) {
-    await runReceiptOcr(receipts[index].id, files[index]);
+    const file = files[index];
+    try {
+      if ((file.type || '').startsWith('image/')) {
+        updateReceiptField(receipts[index].id, { status: '写真を保存中' });
+        renderReceiptScreen();
+        const imageData = await createReceiptImageData(file);
+        updateReceiptField(receipts[index].id, { imageData, status: 'OCR待機中' });
+        renderReceiptScreen();
+        await runReceiptOcr(receipts[index].id, imageData, file.name);
+      } else {
+        updateReceiptField(receipts[index].id, { status: 'OCR対象外（画像のみ）' });
+        renderReceiptScreen();
+      }
+    } catch (error) {
+      updateReceiptField(receipts[index].id, { status: `${error.message || '読み込み失敗'}・手入力してください` });
+      renderReceiptScreen();
+    }
   }
+}
+function retryReceiptOcr(id) {
+  const receipt = (state.receipts || []).find((item) => item.id === id);
+  if (!receipt) return;
+  if (!receipt.imageData) { alert('再読み取り用の写真がありません。もう一度カメラで撮ってください'); return; }
+  runReceiptOcr(receipt.id, receipt.imageData, receipt.fileName || '領収書');
 }
 function updateReceiptField(id, patch) {
   const item = (state.receipts || []).find((receipt) => receipt.id === id);
@@ -2102,10 +2200,10 @@ function handleReceiptFiles(files) {
   const list = Array.from(files || []);
   if (!list.length) return;
   const now = new Date().toISOString();
-  const receipts = list.map((file) => normalizeReceipt({ fileName: file.name, importedAt: now, category: guessReceiptCategory(file.name), date: guessReceiptDate(file.name), amount: guessReceiptAmount(file.name), status: (file.type || '').startsWith('image/') ? 'OCR待機中' : 'OCR対象外（画像のみ）' }));
+  const receipts = list.map((file) => normalizeReceipt({ fileName: file.name, importedAt: now, category: guessReceiptCategory(file.name), date: guessReceiptDate(file.name), amount: guessReceiptAmount(file.name), status: (file.type || '').startsWith('image/') ? '写真準備中' : 'OCR対象外（画像のみ）' }));
   state.receipts = [...(state.receipts || []), ...receipts];
   saveState(); renderReceiptScreen(); scheduleDriveAutoSync({ message: '領収書をクラウドへ保存します...' });
-  runReceiptOcrQueue(receipts, list);
+  runReceiptImportQueue(receipts, list);
 }
 function persistSettingsFromForm({ render = false, feedback = '', sections = [] } = {}) {
   const linesToObjects = (text, previous) => text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((label, index) => ({ id: previous[index]?.id || `exp${index + 1}`, label }));
@@ -2328,6 +2426,8 @@ function bindEvents() {
   document.getElementById('backup-export-btn')?.addEventListener('click', exportBackupJson);
   document.getElementById('backup-import-btn')?.addEventListener('click', () => document.getElementById('backup-file')?.click());
   document.getElementById('backup-file')?.addEventListener('change', (event) => { importBackupJson(event.target.files?.[0]); event.target.value = ''; });
+  document.getElementById('receipt-camera-btn')?.addEventListener('click', () => document.getElementById('receipt-camera')?.click());
+  document.getElementById('receipt-camera')?.addEventListener('change', (event) => { handleReceiptFiles(event.target.files); event.target.value = ''; });
   document.getElementById('receipt-pick-btn')?.addEventListener('click', () => document.getElementById('receipt-file')?.click());
   document.getElementById('receipt-file')?.addEventListener('change', (event) => { handleReceiptFiles(event.target.files); event.target.value = ''; });
   document.getElementById('stamp-pick-btn')?.addEventListener('click', () => document.getElementById('st-stamp-file')?.click());
@@ -2374,6 +2474,8 @@ function bindEvents() {
     if (companySelect) { const input = document.getElementById('f-company'); if (input && companySelect.value) { input.value = companySelect.value; applyCompanyRate(companySelect.value); updateSubcontractDiff(); } return; }
     const applyReceipt = event.target.closest('[data-apply-receipt]');
     if (applyReceipt) { applyReceiptToEntry(applyReceipt.dataset.applyReceipt); return; }
+    const retryReceipt = event.target.closest('[data-ocr-retry]');
+    if (retryReceipt) { retryReceiptOcr(retryReceipt.dataset.ocrRetry); return; }
     const delReceipt = event.target.closest('[data-del-receipt]');
     if (delReceipt) { state.receipts = (state.receipts || []).filter((receipt) => receipt.id !== delReceipt.dataset.delReceipt); saveState(); renderAll(); scheduleDriveAutoSync({ message: '領収書をクラウドへ保存します...' }); return; }
     const companyChip = event.target.closest('[data-company]'); if (companyChip) { selectedCompany = companyChip.dataset.company; renderInvoiceScreen(); return; }

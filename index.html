@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json?v=35">
 <link rel="icon" href="icon-192.png?v=34">
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=34">
-  <link rel="stylesheet" href="styles.css?v=62">
+  <link rel="stylesheet" href="styles.css?v=63">
 </head>
 <body>
 <div id="sc-cal" class="screen active">
@@ -279,8 +279,13 @@
     <div class="top-menu hidden top-menu-clone"></div>
   </div>
   <div class="receipt-import">
+    <input id="receipt-camera" type="file" accept="image/*" capture="environment" hidden>
     <input id="receipt-file" type="file" accept="image/*,.pdf" multiple hidden>
-    <button class="btn-primary" type="button" id="receipt-pick-btn">領収書を読み込み</button>
+    <div class="receipt-import-actions">
+      <button class="btn-primary" type="button" id="receipt-camera-btn">カメラで撮る</button>
+      <button class="btn-secondary" type="button" id="receipt-pick-btn">写真から選ぶ</button>
+    </div>
+    <div class="receipt-import-note">撮影後に日付・金額・経費区分を読み取り、確認して予定へ入力できます。</div>
   </div>
   <div class="receipt-summary">
     <div class="sync-section-head">
@@ -321,7 +326,7 @@
   </div>
 </div>
 
-  <script src="app.js?v=89"></script>
+  <script src="app.js?v=90"></script>
 <script src="settings-polish.js?v=1"></script>
 </body>
 </html>
