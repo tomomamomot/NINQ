@@ -26,6 +26,7 @@ body[data-ui-size="4"]{--cal-slot-height:22px;--cal-stack-height:94px;--holiday-
 body[data-ui-size="5"]{--cal-slot-height:24px;--cal-stack-height:102px;--holiday-name-size:13px}
 body[data-ui-size="6"]{--cal-slot-height:26px;--cal-stack-height:110px;--holiday-name-size:14px}
 body[data-font="meiryo"]{--app-font:Meiryo,'Hiragino Sans','Noto Sans JP',sans-serif}
+body[data-font="thin"]{--app-font:'Hiragino Sans','Yu Gothic UI','Segoe UI',sans-serif}
 body[data-font="gothic"]{--app-font:'BIZ UDPGothic','Yu Gothic UI',Meiryo,'Noto Sans JP',sans-serif}
 body[data-font="rounded"]{--app-font:'Hiragino Maru Gothic ProN','Yu Gothic UI',Meiryo,'Noto Sans JP',sans-serif}
 body{font-family:var(--app-font);background:var(--bg);color:var(--ink);font-size:var(--body-size);max-width:430px;margin:0 auto;overflow-x:hidden}
@@ -363,3 +364,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
   .company-combo{grid-template-columns:108px minmax(0,1fr)}
   .fab{right:16px;bottom:calc(82px + var(--safe-bot));width:58px;height:58px}
 }
+body[data-font="thin"] #sc-cal .cal-task{font-weight:500}
+body[data-font="thin"] #sc-cal .dn{font-weight:500}
+body[data-font="thin"] #sc-cal .cal-dow{font-weight:500}
+body[data-font="thin"] #sc-cal .month-label{font-weight:700}
