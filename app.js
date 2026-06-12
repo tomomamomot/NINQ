@@ -5,7 +5,8 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.12-4';
+const APP_VERSION = 'v2026.06.12-5';
+const FIREBASE_POLL_INTERVAL_MS = 45000;
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
 const TESSERACT_CORE_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js';
@@ -54,6 +55,8 @@ let firebaseSyncInFlight = false;
 let firebaseSyncQueued = false;
 let firebaseSyncTimer = null;
 let firebaseInitStarted = false;
+let firebasePollTimer = null;
+let firebasePollingStarted = false;
 let isSheetPageOpen = false;
 let sheetPinchStart = null;
 let sheetDragStart = null;
@@ -1501,7 +1504,7 @@ async function syncFirebaseCloud({ auto = false, reason = '' } = {}) {
   }
   firebaseSyncInFlight = true;
   try {
-    setSyncLog(auto && reason === 'save' ? '変更をNINQクラウドへ保存中です...' : 'NINQクラウドの最新データを確認中です...');
+    if (reason !== 'poll') setSyncLog(auto && reason === 'save' ? '変更をNINQクラウドへ保存中です...' : 'NINQクラウドの最新データを確認中です...');
     const remotePayload = await window.NinqFirebaseCloud.readState();
     if (!remotePayload) {
       const payload = firebaseSyncPayload();
@@ -1542,7 +1545,7 @@ async function syncFirebaseCloud({ auto = false, reason = '' } = {}) {
     }
     rememberDriveSync(remotePayload);
     saveSyncPending(false);
-    setSyncLog(`NINQクラウドと同じ状態です。予定 ${state.entries.length}件`);
+    if (reason !== 'poll') setSyncLog(`NINQクラウドと同じ状態です。予定 ${state.entries.length}件`);
   } catch (error) {
     if (auto) saveSyncPending(true, reason || 'retry');
     setSyncLog(auto ? 'NINQクラウド同期を次回オンライン時に再試行します' : (error.message || 'NINQクラウド同期に失敗しました'));
@@ -2658,7 +2661,7 @@ function bindEvents() {
   document.getElementById('google-auto-sync')?.addEventListener('change', () => {
     saveGoogleSettings({ feedback: false, render: false });
     setSyncLog(state.settings.googleSyncEnabled ? '自動同期をONにしました。ログイン済みなら自動で同期します' : '自動同期をOFFにしました');
-    if (state.settings.googleSyncEnabled) syncFirebaseCloud({ auto: true, reason: 'startup' });
+    if (state.settings.googleSyncEnabled) { syncFirebaseCloud({ auto: true, reason: 'startup' }); scheduleFirebasePollSoon(2500); }
     else renderSyncScreen();
   });
   document.getElementById('google-conflict-mode')?.addEventListener('change', () => {
@@ -2859,6 +2862,32 @@ function bindEvents() {
 }
 
 function registerPwa() { if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('sw failed', error)); }
+function shouldPollFirebaseCloud() {
+  return !!(state.settings.googleSyncEnabled
+    && firebaseUser
+    && firebaseAvailable()
+    && navigator.onLine
+    && document.visibilityState !== 'hidden'
+    && !firebaseSyncInFlight
+    && !isEditingSyncSensitiveField());
+}
+function pollFirebaseCloud() {
+  if (!shouldPollFirebaseCloud()) return;
+  syncFirebaseCloud({ auto: true, reason: loadSyncPending().pending ? 'save' : 'poll' });
+}
+function scheduleFirebasePollSoon(delay = 1200) {
+  window.setTimeout(pollFirebaseCloud, delay);
+}
+function startFirebaseCloudPolling() {
+  if (firebasePollingStarted) return;
+  firebasePollingStarted = true;
+  window.clearInterval(firebasePollTimer);
+  firebasePollTimer = window.setInterval(pollFirebaseCloud, FIREBASE_POLL_INTERVAL_MS);
+  window.addEventListener('focus', () => scheduleFirebasePollSoon(1000));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') scheduleFirebasePollSoon(1000);
+  });
+}
 function initFirebaseCloudHooks() {
   if (firebaseInitStarted) return;
   firebaseInitStarted = true;
@@ -2869,6 +2898,7 @@ function initFirebaseCloudHooks() {
       firebaseUser = user;
       if (state.settings.googleSyncEnabled && navigator.onLine) {
         window.setTimeout(() => syncFirebaseCloud({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' }), 700);
+        scheduleFirebasePollSoon(2500);
       }
     }
   });
@@ -2881,6 +2911,7 @@ function initFirebaseCloudHooks() {
       saveState();
       setSyncLog(`${firebaseUser.email || 'Googleアカウント'} でNINQクラウドにログインしました`);
       syncFirebaseCloud({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' });
+      scheduleFirebasePollSoon(2500);
     } else {
       renderSyncScreen();
     }
@@ -2895,12 +2926,14 @@ function initFirebaseCloudHooks() {
       firebaseUser = user;
       if (state.settings.googleSyncEnabled && navigator.onLine) {
         window.setTimeout(() => syncFirebaseCloud({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' }), 700);
+        scheduleFirebasePollSoon(2500);
       }
     }
   }
 }
 function startCloudSyncHooks() {
   initFirebaseCloudHooks();
+  startFirebaseCloudPolling();
   window.addEventListener('online', () => {
     if (!state.settings.googleSyncEnabled) return;
     const pending = loadSyncPending();
