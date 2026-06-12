@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.12-1';
+const APP_VERSION = 'v2026.06.12-2';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
 const TESSERACT_CORE_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js';
@@ -49,6 +49,11 @@ let driveAuthPrompt = 'consent';
 let driveSyncTimer = null;
 let driveSyncInFlight = false;
 let driveSyncQueued = false;
+let firebaseUser = null;
+let firebaseSyncInFlight = false;
+let firebaseSyncQueued = false;
+let firebaseSyncTimer = null;
+let firebaseInitStarted = false;
 let isSheetPageOpen = false;
 let sheetPinchStart = null;
 let sheetDragStart = null;
@@ -1066,6 +1071,9 @@ function receiptCardHtml(receipt) {
 function syncStatusText() {
   const pending = loadSyncPending();
   if (!navigator.onLine) return pending.pending ? 'オフライン・未送信あり' : 'オフライン';
+  if (firebaseSyncInFlight) return 'NINQクラウド同期中';
+  if (firebaseUser) return state.settings.googleSyncEnabled ? 'NINQクラウドON' : 'ログイン済み';
+  if (window.NinqFirebaseCloud) return state.settings.googleSyncEnabled ? 'ログイン待ち' : '未ログイン';
   if (driveSyncInFlight) return '同期中';
   if (googleAccessToken) return state.settings.googleSyncEnabled ? '自動同期ON' : 'ログイン済み';
   if (state.settings.googleClientId) return state.settings.googleSyncEnabled ? '自動同期ON・再ログイン待ち' : '設定済み';
@@ -1074,6 +1082,16 @@ function syncStatusText() {
 function renderSyncScreen() {
   const month = monthEntries();
   const sub = document.getElementById('sync-sub'); if (sub) sub.textContent = '出力と引き継ぎ';
+  const syncTitle = document.querySelector('#sc-sync .sync-section:nth-of-type(2) .sync-section-title'); if (syncTitle) syncTitle.textContent = 'NINQクラウド同期';
+  const syncDesc = document.querySelector('#sc-sync .sync-section:nth-of-type(2) .sync-section-sub'); if (syncDesc) syncDesc.textContent = '初回だけGoogleログイン。以後はFirebaseへ自動保存します';
+  const clientLabel = document.querySelector('label[for="google-client-id"]'); if (clientLabel) clientLabel.textContent = 'Googleカレンダー出力用クライアントID';
+  const clientPlaceholder = document.getElementById('google-client-id'); if (clientPlaceholder) clientPlaceholder.placeholder = 'カレンダー出力を使う場合のみ';
+  const autoSyncLabel = document.getElementById('google-auto-sync')?.closest('label'); if (autoSyncLabel && autoSyncLabel.lastChild) autoSyncLabel.lastChild.textContent = ' NINQクラウド自動同期を使う';
+  const conflictLabel = document.querySelector('label[for="google-conflict-mode"]'); if (conflictLabel) conflictLabel.textContent = 'PC/スマホの両方で変更した時';
+  const loginButton = document.getElementById('google-login-btn'); if (loginButton) loginButton.textContent = firebaseUser ? 'ログイン済み' : 'NINQクラウドにログイン';
+  const sendButton = document.getElementById('drive-send-device-btn'); if (sendButton) sendButton.textContent = 'この端末から送る';
+  const receiveButton = document.getElementById('drive-receive-device-btn'); if (receiveButton) receiveButton.textContent = 'NINQクラウドから受け取る';
+  const saveSyncButton = document.getElementById('save-google-settings-btn'); if (saveSyncButton) saveSyncButton.textContent = '同期設定を保存';
   const rangeStart = document.getElementById('google-export-start');
   const rangeEnd = document.getElementById('google-export-end');
   if (rangeStart && !rangeStart.value) rangeStart.value = toYmd(new Date(cursor.getFullYear(), cursor.getMonth(), 1));
@@ -1084,6 +1102,10 @@ function renderSyncScreen() {
   const clientInput = document.getElementById('google-client-id'); if (clientInput && !clientInput.value) clientInput.value = state.settings.googleClientId || '';
   const autoSync = document.getElementById('google-auto-sync'); if (autoSync) autoSync.checked = !!state.settings.googleSyncEnabled;
   const conflictMode = document.getElementById('google-conflict-mode'); if (conflictMode) conflictMode.value = state.settings.googleConflictMode || 'newer';
+  if (conflictMode) {
+    const newer = conflictMode.querySelector('option[value="newer"]'); if (newer) newer.textContent = '新しい方を採用';
+    const confirmOption = conflictMode.querySelector('option[value="confirm"]'); if (confirmOption) confirmOption.textContent = '確認して選ぶ';
+  }
   const driveStatus = document.getElementById('drive-sync-status'); if (driveStatus) driveStatus.textContent = syncStatusText();
   const pending = loadSyncPending();
   const log = document.getElementById('sync-log'); if (log && !log.textContent) log.textContent = pending.pending ? '未送信の変更があります。オンライン復帰後に自動送信します' : '初回だけGoogleログインすると、以後は起動時取得・保存時送信を自動で試します';
@@ -1356,6 +1378,178 @@ function saveGoogleSettings({ feedback = true, render = true, touch = true } = {
   if (feedback) setSyncLog('Google設定を保存しました');
 }
 function setSyncLog(message) { const log = document.getElementById('sync-log'); if (log) log.textContent = message; }
+function firebaseAvailable() { return !!window.NinqFirebaseCloud; }
+function mergeFirebaseState(remotePayload) {
+  const merged = mergeDriveState(remotePayload);
+  return preserveLocalReceiptImages(merged);
+}
+function applyRemoteFirebaseState(remotePayload) {
+  state = preserveLocalReceiptImages(normalizeState(remotePayload.state || remotePayload));
+  saveState();
+  rememberDriveSync(remotePayload);
+  saveSyncPending(false);
+  renderAll();
+}
+async function loginFirebaseCloud() {
+  try {
+    saveGoogleSettings({ feedback: false, render: false, touch: false });
+    if (!firebaseAvailable()) throw new Error('Firebaseの読み込み待ちです。数秒後にもう一度押してください');
+    setSyncLog('NINQクラウドにログインしています...');
+    const user = await window.NinqFirebaseCloud.signIn();
+    if (user) firebaseUser = user;
+    return firebaseUser;
+  } catch (error) {
+    setSyncLog(error.message || 'NINQクラウドログインに失敗しました');
+    return null;
+  }
+}
+async function sendDeviceToFirebase() {
+  if (activeScreen === 'st') flushSettingsAutosave();
+  if (!firebaseAvailable()) { setSyncLog('Firebaseの読み込み待ちです。数秒後にもう一度押してください'); return; }
+  if (!firebaseUser) { await loginFirebaseCloud(); if (!firebaseUser) return; }
+  if (firebaseSyncInFlight) { setSyncLog('処理中です。少し待ってからもう一度押してください'); return; }
+  firebaseSyncInFlight = true;
+  try {
+    setSyncLog('この端末のデータをNINQクラウドへ保存しています...');
+    const payload = firebaseSyncPayload();
+    await window.NinqFirebaseCloud.writeState(payload);
+    rememberDriveSync(payload);
+    saveSyncPending(false);
+    setSyncLog(`この端末からNINQクラウドへ保存しました。予定 ${state.entries.length}件`);
+  } catch (error) {
+    saveSyncPending(true, 'save');
+    setSyncLog(error.message || 'NINQクラウドへの保存に失敗しました');
+  } finally {
+    firebaseSyncInFlight = false;
+    renderSyncScreen();
+  }
+}
+async function receiveDeviceFromFirebase() {
+  if (activeScreen === 'st') flushSettingsAutosave();
+  if (!firebaseAvailable()) { setSyncLog('Firebaseの読み込み待ちです。数秒後にもう一度押してください'); return; }
+  if (!firebaseUser) { await loginFirebaseCloud(); if (!firebaseUser) return; }
+  if (firebaseSyncInFlight) { setSyncLog('処理中です。少し待ってからもう一度押してください'); return; }
+  if (hasLocalChangesSinceSync() && !confirm('この端末の未送信の変更を、NINQクラウドのデータで置き換えます。受け取りますか？')) return;
+  firebaseSyncInFlight = true;
+  try {
+    setSyncLog('NINQクラウドからデータを受け取っています...');
+    const remotePayload = await window.NinqFirebaseCloud.readState();
+    if (!remotePayload) { setSyncLog('NINQクラウドにはまだデータがありません。先に「この端末から送る」を押してください'); return; }
+    applyRemoteFirebaseState(remotePayload);
+    setSyncLog(`NINQクラウドから受け取りました。予定 ${state.entries.length}件`);
+  } catch (error) {
+    setSyncLog(error.message || 'NINQクラウドからの受け取りに失敗しました');
+  } finally {
+    firebaseSyncInFlight = false;
+    renderSyncScreen();
+  }
+}
+async function syncFirebaseCloud({ auto = false, reason = '' } = {}) {
+  if (activeScreen === 'st') flushSettingsAutosave();
+  window.clearTimeout(firebaseSyncTimer);
+  firebaseSyncTimer = null;
+  if (auto && isEditingSyncSensitiveField()) {
+    scheduleFirebaseAutoSync({ delay: 8000, reason });
+    return;
+  }
+  if (auto && (!state.settings.googleSyncEnabled || !firebaseUser)) return;
+  if (!firebaseAvailable()) return;
+  if (!navigator.onLine) {
+    saveSyncPending(true, reason || 'offline');
+    setSyncLog('オフラインのためNINQクラウド同期を待機しています');
+    renderSyncScreen();
+    return;
+  }
+  if (firebaseSyncInFlight) {
+    firebaseSyncQueued = true;
+    return;
+  }
+  firebaseSyncInFlight = true;
+  try {
+    setSyncLog(auto && reason === 'save' ? '変更をNINQクラウドへ保存中です...' : 'NINQクラウドの最新データを確認中です...');
+    const remotePayload = await window.NinqFirebaseCloud.readState();
+    if (!remotePayload) {
+      const payload = firebaseSyncPayload();
+      await window.NinqFirebaseCloud.writeState(payload);
+      rememberDriveSync(payload);
+      saveSyncPending(false);
+      setSyncLog('NINQクラウドに初回データを保存しました');
+      return;
+    }
+    const meta = loadSyncMeta();
+    const remoteModifiedAt = remotePayloadModifiedAt(remotePayload);
+    const remoteChanged = isAfterDate(remoteModifiedAt, meta.lastCloudModifiedAt);
+    const localChanged = hasLocalChangesSinceSync();
+    if (remoteChanged && localChanged) {
+      const mergedState = mergeFirebaseState(remotePayload);
+      state = mergedState;
+      saveState();
+      const payload = firebaseSyncPayload();
+      await window.NinqFirebaseCloud.writeState(payload);
+      rememberDriveSync(payload);
+      saveSyncPending(false);
+      renderAll();
+      setSyncLog(`PC/スマホの変更をまとめて保存しました。予定 ${state.entries.length}件`);
+      return;
+    }
+    if (remoteChanged && !localChanged) {
+      applyRemoteFirebaseState(remotePayload);
+      setSyncLog(`NINQクラウドから最新データを取得しました。予定 ${state.entries.length}件`);
+      return;
+    }
+    if (localChanged || reason === 'save') {
+      const payload = firebaseSyncPayload();
+      await window.NinqFirebaseCloud.writeState(payload);
+      rememberDriveSync(payload);
+      saveSyncPending(false);
+      setSyncLog(`変更をNINQクラウドへ保存しました。予定 ${state.entries.length}件`);
+      return;
+    }
+    rememberDriveSync(remotePayload);
+    saveSyncPending(false);
+    setSyncLog(`NINQクラウドと同じ状態です。予定 ${state.entries.length}件`);
+  } catch (error) {
+    if (auto) saveSyncPending(true, reason || 'retry');
+    setSyncLog(auto ? 'NINQクラウド同期を次回オンライン時に再試行します' : (error.message || 'NINQクラウド同期に失敗しました'));
+  } finally {
+    firebaseSyncInFlight = false;
+    renderSyncScreen();
+    if (firebaseSyncQueued) {
+      firebaseSyncQueued = false;
+      scheduleFirebaseAutoSync({ delay: 900, reason: 'save' });
+    }
+  }
+}
+function scheduleFirebaseAutoSync({ delay = 1800, message = '', reason = 'save' } = {}) {
+  window.clearTimeout(firebaseSyncTimer);
+  firebaseSyncTimer = null;
+  if (!state.settings.googleSyncEnabled) {
+    setSyncLog('端末内に保存しました。自動同期をONにするとNINQクラウドにも保存します');
+    return;
+  }
+  if (!firebaseUser) {
+    saveSyncPending(true, reason);
+    setSyncLog('端末内に保存しました。NINQクラウドはログイン後に保存します');
+    renderSyncScreen();
+    return;
+  }
+  if (!navigator.onLine) {
+    saveSyncPending(true, reason);
+    setSyncLog('オフラインのため端末内に保存しました。オンライン復帰後に送信します');
+    renderSyncScreen();
+    return;
+  }
+  saveSyncPending(true, reason);
+  setSyncLog(message || '端末内に保存しました。少し後にNINQクラウドへ自動保存します...');
+  const wait = isEditingSyncSensitiveField() ? Math.max(delay, 8000) : delay;
+  firebaseSyncTimer = window.setTimeout(() => {
+    if (isEditingSyncSensitiveField()) {
+      scheduleFirebaseAutoSync({ delay: 8000, reason });
+      return;
+    }
+    syncFirebaseCloud({ auto: true, reason });
+  }, wait);
+}
 function isEditingSyncSensitiveField() {
   const el = document.activeElement;
   if (!el?.matches?.('input, textarea, select, [contenteditable="true"]')) return false;
@@ -1364,6 +1558,10 @@ function isEditingSyncSensitiveField() {
   return true;
 }
 function scheduleDriveAutoSync({ delay = 1200, message = '', reason = 'save' } = {}) {
+  if (firebaseAvailable() || firebaseUser) {
+    scheduleFirebaseAutoSync({ delay, message, reason });
+    return;
+  }
   window.clearTimeout(driveSyncTimer);
   driveSyncTimer = null;
   if (!state.settings.googleSyncEnabled || !state.settings.googleClientId) {
@@ -1398,6 +1596,20 @@ function localModifiedAt(targetState = state) {
 }
 function syncPayload() {
   return { app: 'NINQ', version: 2, syncedAt: new Date().toISOString(), modifiedAt: localModifiedAt(), state: normalizeState(state) };
+}
+function firebaseSyncPayload() {
+  const payload = syncPayload();
+  payload.appVersion = APP_VERSION;
+  payload.backend = 'firebase';
+  payload.state.receipts = (payload.state.receipts || []).map((receipt) => ({ ...receipt, imageData: '' }));
+  return payload;
+}
+function preserveLocalReceiptImages(nextState) {
+  const imageById = new Map((state.receipts || []).filter((receipt) => receipt.imageData).map((receipt) => [receipt.id, receipt.imageData]));
+  nextState.receipts = (nextState.receipts || []).map((receipt) => (
+    !receipt.imageData && imageById.has(receipt.id) ? { ...receipt, imageData: imageById.get(receipt.id) } : receipt
+  ));
+  return nextState;
 }
 function remotePayloadModifiedAt(payload) {
   if (payload?.modifiedAt) return payload.modifiedAt;
@@ -2407,11 +2619,11 @@ function bindEvents() {
   ['st-company-new', 'st-company-day-new', 'st-company-night-new', 'st-company-ot-new'].forEach((id) => document.getElementById(id)?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); addCompanyPreset(); } }));
   document.getElementById('st-expense-new')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); addSettingListItem('st-expenses', 'st-expense-new'); } });
   document.getElementById('save-google-settings-btn')?.addEventListener('click', saveGoogleSettings);
-  document.getElementById('google-login-btn')?.addEventListener('click', loginGoogleDrive);
+  document.getElementById('google-login-btn')?.addEventListener('click', loginFirebaseCloud);
   document.getElementById('google-auto-sync')?.addEventListener('change', () => {
     saveGoogleSettings({ feedback: false, render: false });
     setSyncLog(state.settings.googleSyncEnabled ? '自動同期をONにしました。ログイン済みなら自動で同期します' : '自動同期をOFFにしました');
-    if (state.settings.googleSyncEnabled) syncGoogleDrive({ auto: true, reason: 'startup' });
+    if (state.settings.googleSyncEnabled) syncFirebaseCloud({ auto: true, reason: 'startup' });
     else renderSyncScreen();
   });
   document.getElementById('google-conflict-mode')?.addEventListener('change', () => {
@@ -2419,8 +2631,8 @@ function bindEvents() {
     setSyncLog(state.settings.googleConflictMode === 'confirm' ? '競合時は確認して選びます' : '競合時は更新日時が新しい方を採用します');
     renderSyncScreen();
   });
-  document.getElementById('drive-send-device-btn')?.addEventListener('click', sendDeviceToDrive);
-  document.getElementById('drive-receive-device-btn')?.addEventListener('click', receiveDeviceFromDrive);
+  document.getElementById('drive-send-device-btn')?.addEventListener('click', sendDeviceToFirebase);
+  document.getElementById('drive-receive-device-btn')?.addEventListener('click', receiveDeviceFromFirebase);
   document.getElementById('google-export-range-btn')?.addEventListener('click', exportRangeCalendarIcs);
   document.getElementById('google-open-selected-day-btn')?.addEventListener('click', openSelectedDayGoogleCalendar);
   document.getElementById('backup-export-btn')?.addEventListener('click', exportBackupJson);
@@ -2612,18 +2824,62 @@ function bindEvents() {
 }
 
 function registerPwa() { if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('sw failed', error)); }
+function initFirebaseCloudHooks() {
+  if (firebaseInitStarted) return;
+  firebaseInitStarted = true;
+  window.addEventListener('ninq-firebase-ready', () => {
+    renderSyncScreen();
+    const user = window.NinqFirebaseCloud?.currentUser?.();
+    if (user) {
+      firebaseUser = user;
+      if (state.settings.googleSyncEnabled && navigator.onLine) {
+        window.setTimeout(() => syncFirebaseCloud({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' }), 700);
+      }
+    }
+  });
+  window.addEventListener('ninq-firebase-auth', (event) => {
+    firebaseUser = event.detail?.user || null;
+    if (firebaseUser) {
+      state.settings.googleAccountEmail = firebaseUser.email || state.settings.googleAccountEmail || '';
+      state.settings.googleSyncEnabled = true;
+      markSettingsSections('google');
+      saveState();
+      setSyncLog(`${firebaseUser.email || 'Googleアカウント'} でNINQクラウドにログインしました`);
+      syncFirebaseCloud({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' });
+    } else {
+      renderSyncScreen();
+    }
+  });
+  window.addEventListener('ninq-firebase-error', (event) => {
+    setSyncLog(event.detail?.message || 'Firebaseでエラーが発生しました');
+  });
+  if (window.NinqFirebaseCloud) {
+    renderSyncScreen();
+    const user = window.NinqFirebaseCloud.currentUser?.();
+    if (user) {
+      firebaseUser = user;
+      if (state.settings.googleSyncEnabled && navigator.onLine) {
+        window.setTimeout(() => syncFirebaseCloud({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' }), 700);
+      }
+    }
+  }
+}
 function startCloudSyncHooks() {
+  initFirebaseCloudHooks();
   window.addEventListener('online', () => {
-    if (!state.settings.googleSyncEnabled || !state.settings.googleClientId) return;
+    if (!state.settings.googleSyncEnabled) return;
     const pending = loadSyncPending();
     setSyncLog(pending.pending ? 'オンラインに戻りました。未送信の変更を送信します...' : 'オンラインに戻りました。クラウドを確認します...');
-    syncGoogleDrive({ auto: true, reason: pending.pending ? 'save' : 'startup' });
+    if (firebaseUser || window.NinqFirebaseCloud) syncFirebaseCloud({ auto: true, reason: pending.pending ? 'save' : 'startup' });
+    else if (state.settings.googleClientId) syncGoogleDrive({ auto: true, reason: pending.pending ? 'save' : 'startup' });
   });
   window.addEventListener('offline', () => {
     if (state.settings.googleSyncEnabled) setSyncLog('オフラインです。変更は端末に一時保存します');
     renderSyncScreen();
   });
-  if (state.settings.googleSyncEnabled && state.settings.googleClientId && navigator.onLine) {
+  if (state.settings.googleSyncEnabled && firebaseUser && navigator.onLine) {
+    window.setTimeout(() => syncFirebaseCloud({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' }), 900);
+  } else if (state.settings.googleSyncEnabled && state.settings.googleClientId && navigator.onLine && !window.NinqFirebaseCloud) {
     window.setTimeout(() => syncGoogleDrive({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' }), 900);
   }
 }
