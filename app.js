@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.10-1';
+const APP_VERSION = 'v2026.06.12-1';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
 const TESSERACT_CORE_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js';
@@ -722,7 +722,7 @@ function renderDayEntries() {
   const title = document.getElementById('day-modal-title');
   const body = document.getElementById('day-modal-body');
   if (!modal || !title || !body) return;
-  const entries = dayEntries(selectedDate);
+  const entries = dayEntries(selectedDate).sort(sortEntriesForDemen);
   title.textContent = `${fmtDateJP(selectedDate)}（${weekdayLabel(selectedDate)}）`;
   if (!entries.length) {
     body.innerHTML = `<div class="day-mini-empty"><div class="empty" style="padding:22px 10px 8px"><div>この日の予定はありません</div><p>追加ボタンから登録できます。</p></div><button class="btn-primary" type="button" data-add-date="${selectedDate}">予定を追加</button></div>`;
