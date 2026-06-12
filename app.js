@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.12-7';
+const APP_VERSION = 'v2026.06.13-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
@@ -64,6 +64,7 @@ let sheetZoom = 1;
 let sheetSelection = null;
 let sheetMouseSelecting = false;
 let printCleanupTimer = null;
+let openCompanyPresetId = '';
 
 function loadState() {
   try {
@@ -368,9 +369,21 @@ function companyRateText(preset) {
 function renderCompanyPresetList() {
   const list = document.getElementById('st-company-list'); if (!list) return;
   const presets = companyPresetValues();
+  if (openCompanyPresetId && !presets.some((preset) => preset.id === openCompanyPresetId)) openCompanyPresetId = '';
   list.innerHTML = presets.length ? presets.map((preset, index) => `
-    <div class="company-rate-card">
-      <div class="company-rate-edit">
+    <div class="company-rate-card ${preset.id === openCompanyPresetId ? 'open' : ''}">
+      <div class="company-rate-summary">
+        <button class="company-rate-toggle" type="button" data-toggle-company-preset="${escapeHtml(preset.id)}" aria-expanded="${preset.id === openCompanyPresetId ? 'true' : 'false'}">
+          <span class="company-rate-main">${escapeHtml(preset.name)}</span>
+          <span class="company-rate-sub">${escapeHtml(preset.officialName || preset.name)}</span>
+          <span class="company-rate-meta">${companyRateText(preset)}</span>
+        </button>
+        <div class="company-rate-actions">
+          <button class="company-rate-edit-btn" type="button" data-toggle-company-preset="${escapeHtml(preset.id)}">${preset.id === openCompanyPresetId ? '閉じる' : '編集'}</button>
+          <button class="company-rate-delete-btn" type="button" data-remove-company-preset="${index}" aria-label="削除">×</button>
+        </div>
+      </div>
+      <div class="company-rate-edit ${preset.id === openCompanyPresetId ? '' : 'hidden'}">
         <input class="st-input company-rate-name-input" data-company-preset-field="name" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.name)}" placeholder="カレンダー表示名">
         <input class="st-input company-rate-name-input" data-company-preset-field="officialName" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.officialName || preset.name)}" placeholder="請求書・出面表の正式名称">
         <input class="st-input" type="number" inputmode="numeric" data-company-preset-field="dayRate" data-company-preset-id="${escapeHtml(preset.id)}" value="${rateFieldValue(preset.dayRate)}" placeholder="日勤">
@@ -378,7 +391,6 @@ function renderCompanyPresetList() {
         <input class="st-input" type="number" inputmode="numeric" data-company-preset-field="otRate" data-company-preset-id="${escapeHtml(preset.id)}" value="${rateFieldValue(preset.otRate)}" placeholder="残業">
         <select class="st-select company-closing-select" data-company-preset-field="closingDay" data-company-preset-id="${escapeHtml(preset.id)}" aria-label="締め日">${closingDayOptions(preset.closingDay)}</select>
       </div>
-      <button type="button" data-remove-company-preset="${index}" aria-label="削除">×</button>
     </div>`).join('') : '<div class="empty-inline">まだ登録がありません</div>';
 }
 function markSettingsSections(sections) {
@@ -468,8 +480,10 @@ function addCompanyPreset() {
   const nameInput = document.getElementById('st-company-new'); if (!nameInput) return;
   const name = nameInput.value.trim(); if (!name) return;
   const next = companyPresetValues().filter((item) => item.name !== name);
-  next.push({ id: crypto.randomUUID(), name, officialName: document.getElementById('st-company-official-new')?.value.trim() || name, dayRate: num(document.getElementById('st-company-day-new')?.value), nightRate: num(document.getElementById('st-company-night-new')?.value), otRate: num(document.getElementById('st-company-ot-new')?.value), closingDay: closingDayValue(document.getElementById('st-company-closing-new')?.value) });
+  const id = crypto.randomUUID();
+  next.push({ id, name, officialName: document.getElementById('st-company-official-new')?.value.trim() || name, dayRate: num(document.getElementById('st-company-day-new')?.value), nightRate: num(document.getElementById('st-company-night-new')?.value), otRate: num(document.getElementById('st-company-ot-new')?.value), closingDay: closingDayValue(document.getElementById('st-company-closing-new')?.value) });
   writeCompanyPresetValues(next);
+  openCompanyPresetId = id;
   ['st-company-new', 'st-company-official-new', 'st-company-day-new', 'st-company-night-new', 'st-company-ot-new'].forEach((id) => { const el = document.getElementById(id); if (el) el.value = ''; });
   const closing = document.getElementById('st-company-closing-new'); if (closing) closing.value = '0';
   renderCompanyPresetList();
@@ -2696,8 +2710,10 @@ function bindEvents() {
     if (datePick) { datePickerValue = datePick.dataset.datePick; datePickerCursor = startOfMonth(fromYmd(datePickerValue)); renderDatePicker(); return; }
     const datePickerInput = event.target.closest('[data-date-picker]');
     if (datePickerInput) { openDatePicker(datePickerInput); return; }
+    const toggleCompanyPreset = event.target.closest('[data-toggle-company-preset]');
+    if (toggleCompanyPreset) { openCompanyPresetId = openCompanyPresetId === toggleCompanyPreset.dataset.toggleCompanyPreset ? '' : toggleCompanyPreset.dataset.toggleCompanyPreset; renderCompanyPresetList(); return; }
     const removeCompanyPreset = event.target.closest('[data-remove-company-preset]');
-    if (removeCompanyPreset) { const values = companyPresetValues().filter((_, index) => index !== Number(removeCompanyPreset.dataset.removeCompanyPreset)); writeCompanyPresetValues(values); renderCompanyPresetList(); scheduleSettingsAutosave({ immediate: true, section: 'companies' }); return; }
+    if (removeCompanyPreset) { const values = companyPresetValues().filter((_, index) => index !== Number(removeCompanyPreset.dataset.removeCompanyPreset)); openCompanyPresetId = ''; writeCompanyPresetValues(values); renderCompanyPresetList(); scheduleSettingsAutosave({ immediate: true, section: 'companies' }); return; }
     const removeSettingItem = event.target.closest('[data-remove-setting-item]');
     if (removeSettingItem) { const hiddenId = removeSettingItem.dataset.removeSettingItem; const index = Number(removeSettingItem.dataset.removeIndex); const values = settingListValues(hiddenId).filter((_, itemIndex) => itemIndex !== index); writeSettingList(hiddenId, values); renderSettingListEditors(); scheduleSettingsAutosave({ immediate: true, section: 'expenses' }); return; }
     const closeDayButton = event.target.closest('[data-close-day-modal]');
