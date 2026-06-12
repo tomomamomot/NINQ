@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.12-2';
+const APP_VERSION = 'v2026.06.12-3';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
 const TESSERACT_CORE_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js';
@@ -562,6 +562,7 @@ function renderNav() {
   document.getElementById(`sc-${activeScreen}`)?.classList.add('active');
   document.getElementById('sc-cal')?.classList.toggle('pc-pinned', activeScreen !== 'cal');
   document.querySelectorAll('.nav-item').forEach((el) => el.classList.toggle('active', el.dataset.screen === activeScreen));
+  document.querySelectorAll('[data-screen="sync"]').forEach((el) => { el.textContent = 'NINQクラウド'; });
   syncMenuClones();
   document.querySelectorAll('[data-screen="sub"],[data-screen-link="sub"]').forEach((el) => el.classList.toggle('hidden', !subcontractEnabled()));
   document.getElementById('fab-sub')?.classList.toggle('hidden', !subcontractEnabled());
@@ -572,7 +573,7 @@ function syncMenuClones() {
   const template = `
     <button class="top-menu-item" data-screen-link="cal">カレンダー</button>
     <button class="top-menu-item" data-screen-link="inv">請求書、出面表</button>
-    <button class="top-menu-item" data-screen-link="sync">Google同期</button>
+    <button class="top-menu-item" data-screen-link="sync">NINQクラウド</button>
     <button class="top-menu-item" data-screen-link="receipt">経費</button>
     ${subItem}
     <button class="top-menu-item" data-screen-link="st">設定</button>
@@ -1082,16 +1083,50 @@ function syncStatusText() {
 function renderSyncScreen() {
   const month = monthEntries();
   const sub = document.getElementById('sync-sub'); if (sub) sub.textContent = '出力と引き継ぎ';
+  const syncTopTitle = document.querySelector('#sc-sync .topbar-title'); if (syncTopTitle) syncTopTitle.textContent = 'NINQクラウド';
+  if (sub) sub.textContent = firebaseUser ? '自動同期中' : '初回ログインのみ';
+  const cloudSection = document.querySelector('#sc-sync .sync-section:nth-of-type(2)');
+  if (cloudSection) {
+    cloudSection.classList.add('cloud-sync-section');
+    let note = cloudSection.querySelector('.cloud-auto-note');
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'cloud-auto-note';
+      cloudSection.querySelector('.sync-section-head')?.after(note);
+    }
+    note.innerHTML = firebaseUser
+      ? '<strong>自動同期が有効です</strong><span>アプリ起動時にクラウド確認、予定や設定の変更後に自動保存します。</span>'
+      : '<strong>初回だけログインしてください</strong><span>ログイン後はPC・スマホ間の同期を自動で行います。</span>';
+  }
   const syncTitle = document.querySelector('#sc-sync .sync-section:nth-of-type(2) .sync-section-title'); if (syncTitle) syncTitle.textContent = 'NINQクラウド同期';
   const syncDesc = document.querySelector('#sc-sync .sync-section:nth-of-type(2) .sync-section-sub'); if (syncDesc) syncDesc.textContent = '初回だけGoogleログイン。以後はFirebaseへ自動保存します';
   const clientLabel = document.querySelector('label[for="google-client-id"]'); if (clientLabel) clientLabel.textContent = 'Googleカレンダー出力用クライアントID';
   const clientPlaceholder = document.getElementById('google-client-id'); if (clientPlaceholder) clientPlaceholder.placeholder = 'カレンダー出力を使う場合のみ';
   const autoSyncLabel = document.getElementById('google-auto-sync')?.closest('label'); if (autoSyncLabel && autoSyncLabel.lastChild) autoSyncLabel.lastChild.textContent = ' NINQクラウド自動同期を使う';
   const conflictLabel = document.querySelector('label[for="google-conflict-mode"]'); if (conflictLabel) conflictLabel.textContent = 'PC/スマホの両方で変更した時';
-  const loginButton = document.getElementById('google-login-btn'); if (loginButton) loginButton.textContent = firebaseUser ? 'ログイン済み' : 'NINQクラウドにログイン';
+  const loginButton = document.getElementById('google-login-btn'); if (loginButton) { loginButton.textContent = firebaseUser ? 'ログイン済み' : 'NINQクラウドにログイン'; loginButton.disabled = !!firebaseUser; loginButton.classList.toggle('cloud-login-done', !!firebaseUser); }
   const sendButton = document.getElementById('drive-send-device-btn'); if (sendButton) sendButton.textContent = 'この端末から送る';
   const receiveButton = document.getElementById('drive-receive-device-btn'); if (receiveButton) receiveButton.textContent = 'NINQクラウドから受け取る';
   const saveSyncButton = document.getElementById('save-google-settings-btn'); if (saveSyncButton) saveSyncButton.textContent = '同期設定を保存';
+  const clientField = document.getElementById('google-client-id')?.closest('.sync-field');
+  const conflictField = document.getElementById('google-conflict-mode')?.closest('.sync-field');
+  clientField?.classList.add('cloud-hidden-setting');
+  autoSyncLabel?.classList.add('cloud-hidden-setting');
+  conflictField?.classList.add('cloud-hidden-setting');
+  saveSyncButton?.classList.add('cloud-hidden-setting');
+  if (cloudSection && sendButton && receiveButton) {
+    let manual = cloudSection.querySelector('.cloud-manual-details');
+    if (!manual) {
+      manual = document.createElement('details');
+      manual.className = 'cloud-manual-details';
+      manual.innerHTML = '<summary>非常用の手動操作</summary><div class="cloud-manual-actions"></div>';
+      cloudSection.appendChild(manual);
+    }
+    const manualActions = manual.querySelector('.cloud-manual-actions');
+    if (manualActions && !manualActions.contains(sendButton)) manualActions.appendChild(sendButton);
+    if (manualActions && !manualActions.contains(receiveButton)) manualActions.appendChild(receiveButton);
+    if (manualActions && saveSyncButton && !manualActions.contains(saveSyncButton)) manualActions.appendChild(saveSyncButton);
+  }
   const rangeStart = document.getElementById('google-export-start');
   const rangeEnd = document.getElementById('google-export-end');
   if (rangeStart && !rangeStart.value) rangeStart.value = toYmd(new Date(cursor.getFullYear(), cursor.getMonth(), 1));
