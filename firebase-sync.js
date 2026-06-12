@@ -20,7 +20,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js';
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyAVuH9TB_ngfUSlte_KxVvj0A1-hTzjOc',
+  apiKey: 'AIzaSyAVuH9TB_ngfUSlte_KxVvj001I-hTzjOc',
   authDomain: 'ninq-6de8a.firebaseapp.com',
   projectId: 'ninq-6de8a',
   storageBucket: 'ninq-6de8a.firebasestorage.app',
