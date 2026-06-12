@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>NINQ mobile UI patterns</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#173f73;--blue:#1f5cad;--line:#d8e2ee;--paper:#fff;--muted:#637082;
+  --day:#f6ca45;--day-ink:#493300;--night:#7561c9;--sub:#30a66a;--red:#d94242;
+}
+body{min-height:100vh;background:#e9eff6;color:#172033;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI",sans-serif;padding:18px}
+.page{max-width:1180px;margin:0 auto}
+.head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px}
+.head h1{font-size:24px;letter-spacing:.02em}
+.head p{margin-top:5px;color:var(--muted);font-size:14px;font-weight:700}
+.tabs{display:flex;gap:8px;overflow:auto;padding-bottom:4px}
+.tab{border:1px solid #c9d6e6;background:#fff;color:#26364c;border-radius:999px;padding:10px 14px;font-size:14px;font-weight:900;white-space:nowrap;cursor:pointer}
+.tab.active{background:var(--blue);border-color:var(--blue);color:#fff}
+.stage{display:grid;grid-template-columns:340px minmax(0,1fr);gap:18px;align-items:start}
+.notes{background:#fff;border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 12px 34px rgba(15,23,42,.08)}
+.notes h2{font-size:18px;margin-bottom:10px}
+.notes ul{display:grid;gap:10px;padding-left:18px;color:#334155;font-size:15px;line-height:1.55;font-weight:700}
+.phone-wrap{display:flex;justify-content:center}
+.phone{width:min(100%,390px);min-height:820px;background:#fff;border-radius:32px;box-shadow:0 22px 60px rgba(15,23,42,.18);overflow:hidden;border:1px solid rgba(15,23,42,.08)}
+.phone-inner{min-height:820px;background:var(--app-bg,#f2f6fb);padding-bottom:16px}
+.top{background:var(--top-bg,var(--navy));color:#fff;padding:18px 16px 13px}
+.top-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.brand{font-size:24px;font-weight:950;letter-spacing:.03em}
+.version{font-size:11px;border:1px solid rgba(255,255,255,.38);border-radius:999px;padding:3px 8px;margin-left:5px}
+.menu{width:42px;height:42px;border-radius:14px;border:1px solid rgba(255,255,255,.32);display:grid;place-items:center;font-size:24px;font-weight:900}
+.subline{font-size:13px;opacity:.9;margin-top:5px;font-weight:750}
+.month{display:grid;grid-template-columns:44px 1fr 44px;align-items:center;gap:10px;padding:12px 14px;background:var(--month-bg,#fff);border-bottom:1px solid var(--line)}
+.navbtn{height:42px;border:none;border-radius:14px;background:var(--nav-btn,#e7f0ff);color:var(--blue);font-size:22px;font-weight:950}
+.month strong{text-align:center;font-size:var(--month-size,24px);font-weight:950}
+.calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:var(--gap,5px);padding:10px 8px;background:var(--cal-bg,#fff)}
+.dow{text-align:center;color:var(--muted);font-size:13px;font-weight:900;padding:4px 0}
+.dow.sun{color:var(--red)}
+.day{min-height:var(--day-h,94px);background:var(--cell-bg,#f8fbff);border:var(--cell-border,0);border-radius:var(--cell-radius,14px);padding:5px 4px;overflow:hidden;position:relative}
+.day.other{opacity:.38}
+.num{width:var(--num-size,31px);height:var(--num-size,31px);display:grid;place-items:center;margin:0 auto 3px;border-radius:999px;font-size:var(--num-font,18px);font-weight:900;color:#050b16}
+.sun .num,.holiday .num{color:var(--red)}
+.sat .num{color:#1753a3}
+.today .num{background:var(--blue);color:#fff}
+.holiday-name{display:block;text-align:center;font-size:8px;color:var(--red);font-weight:900;line-height:1;margin-top:-1px}
+.events{display:grid;gap:3px}
+.event{min-height:var(--event-h,18px);border-radius:var(--event-radius,6px);padding:2px 5px;font-size:var(--event-font,11px);line-height:1.12;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.event.day-e{background:var(--day);color:var(--day-ink)}
+.event.night-e{background:var(--night);color:#fff}
+.event.sub-e{background:var(--sub);color:#fff}
+.event.muted{background:#e9eef5;color:#4b5563}
+.summary{display:grid;grid-template-columns:1fr 1fr 72px;gap:8px;padding:10px 12px;background:var(--summary-bg,#f2f6fb)}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:10px 11px;min-height:55px}
+.label{font-size:11px;color:var(--muted);font-weight:900}
+.value{margin-top:3px;font-size:20px;font-weight:950;color:#071226}
+.value.green{color:#07905d}
+.detail{display:grid;place-items:center;color:var(--blue);font-size:13px;font-weight:950}
+.selected-list{margin:10px 12px 0;background:#fff;border:1px solid var(--line);border-radius:18px;padding:13px;display:none}
+.selected-list h3{font-size:17px;margin-bottom:9px}
+.row{display:grid;grid-template-columns:8px minmax(0,1fr) 72px;gap:9px;align-items:center;border-top:1px solid #edf2f7;padding:10px 0}
+.row:first-of-type{border-top:none}
+.bar{width:8px;height:38px;border-radius:999px;background:var(--day)}
+.bar.night{background:var(--night)}
+.row-title{font-size:17px;font-weight:950;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-sub{font-size:12px;color:var(--muted);font-weight:800;margin-top:3px}
+.row-pay{text-align:right;font-size:13px;font-weight:950;color:#1d4e8f}
+.fab{position:fixed;right:max(22px,calc((100vw - 390px)/2 + 22px));bottom:22px;width:58px;height:58px;border:none;border-radius:50%;background:var(--blue);color:#fff;font-size:34px;font-weight:600;box-shadow:0 14px 28px rgba(31,92,173,.28)}
+
+.pattern-clean{--app-bg:#f5f8fc;--top-bg:#fff;--month-bg:#fff;--cal-bg:#fff;--cell-bg:#f8fafc;--top-text:#172033}
+.pattern-clean .top{color:#172033;border-bottom:1px solid var(--line)}
+.pattern-clean .menu{border-color:#cbd8e8;color:#1e4c86;background:#f4f8ff}
+.pattern-clean .subline{color:#5d6b7d}
+.pattern-clean .event{box-shadow:inset 0 -1px rgba(0,0,0,.06)}
+.pattern-deep{--app-bg:#eef4fb;--top-bg:linear-gradient(180deg,#10386d,#0f2c53);--cell-bg:#fff;--cell-border:1px solid #e7eef7;--day-h:100px;--event-h:20px;--event-font:11.5px;--num-font:19px}
+.pattern-deep .calendar{padding:10px;background:#eef4fb}
+.pattern-deep .day{box-shadow:0 4px 12px rgba(15,23,42,.04)}
+.pattern-cards{--app-bg:#eef2f7;--top-bg:#1f4f8c;--cal-bg:#eef2f7;--cell-bg:#fff;--cell-radius:9px;--cell-border:1px solid #dce5ef;--gap:4px;--day-h:102px;--event-radius:3px;--event-h:19px;--event-font:12px}
+.pattern-cards .calendar{padding:8px}
+.pattern-cards .event{padding-inline:4px}
+.pattern-focus{--app-bg:#f4f7fb;--top-bg:#16467d;--day-h:70px;--event-h:17px;--event-font:10.5px;--num-font:17px;--num-size:28px}
+.pattern-focus .calendar{padding-bottom:4px}
+.pattern-focus .events .event:nth-child(n+2){display:none}
+.pattern-focus .selected-list{display:block}
+.pattern-focus .summary{grid-template-columns:1fr 1fr}
+.pattern-focus .detail{display:none}
+@media (max-width:820px){body{padding:10px}.head{display:block}.tabs{margin-top:12px}.stage{grid-template-columns:1fr}.notes{order:2}.phone{border-radius:24px}.fab{right:18px}}
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="head">
+    <div>
+      <h1>NINQ スマホUIパターン</h1>
+      <p>色・密度・予定の見せ方を変えた比較用モックです。本体アプリにはまだ反映していません。</p>
+    </div>
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-pattern="clean">A 白基調</button>
+      <button class="tab" data-pattern="deep">B ネイビー</button>
+      <button class="tab" data-pattern="cards">C カード型</button>
+      <button class="tab" data-pattern="focus">D 予定優先</button>
+    </div>
+  </header>
+  <section class="stage">
+    <aside class="notes" id="notes"></aside>
+    <div class="phone-wrap">
+      <div class="phone">
+        <div class="phone-inner pattern-clean" id="phone">
+          <div class="top">
+            <div class="top-row">
+              <div><span class="brand">NINQ</span><span class="version">mock</span></div>
+              <div class="menu">≡</div>
+            </div>
+            <div class="subline">2026年5月 ・ 予定148件</div>
+          </div>
+          <div class="month">
+            <button class="navbtn">‹</button>
+            <strong>2026年5月</strong>
+            <button class="navbtn">›</button>
+          </div>
+          <div class="calendar" id="calendar"></div>
+          <div class="selected-list">
+            <h3>5月13日の予定</h3>
+            <div class="row"><span class="bar"></span><div><div class="row-title">稲 / 麻布台ヒルズ</div><div class="row-sub">日勤 1人工 ・ 交通費 2,200円</div></div><div class="row-pay">¥32,200</div></div>
+            <div class="row"><span class="bar night"></span><div><div class="row-title">稲 / 赤坂ガーデンシティ夜間</div><div class="row-sub">夜勤 1人工 ・ 駐車場 1,000円</div></div><div class="row-pay">¥41,000</div></div>
+          </div>
+          <div class="summary">
+            <div class="card"><div class="label">今月の人工</div><div class="value green">22</div></div>
+            <div class="card"><div class="label">今月の売上</div><div class="value">¥740,000</div></div>
+            <div class="card detail">詳細</div>
+          </div>
+          <button class="fab">＋</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+const days = [
+  ['27','other'],['28','other'],['29','other holiday','昭和の日'],['30','other'],['1',''],['2','sat'],['3','sun holiday','憲法記念日'],
+  ['4','sun holiday','みどりの日'],['5','holiday','こどもの日'],['6','holiday','振替休日'],['7',''],['8',''],['9','sat'],['10','sun'],
+  ['11',''],['12',''],['13',''],['14',''],['15',''],['16','sat'],['17','sun'],
+  ['18',''],['19',''],['20',''],['21',''],['22','today'],['23','sat'],['24','sun'],
+  ['25',''],['26',''],['27',''],['28',''],['29',''],['30','sat'],['31','sun'],
+  ['1','other'],['2','other'],['3','other'],['4','other'],['5','other'],['6','other sat'],['7','other sun']
+];
+const events = {
+  5:[['稲 / 神南清水第一','day-e']],6:[['稲 / 赤坂ガーデンシティ','day-e']],8:[['稲 / 池尻MUTOビル','day-e']],9:[['稲 / 麻布台ヒルズ','day-e']],10:[['稲 / 公文横浜','day-e']],
+  12:[['稲 / 麻布台ヒルズローダー','day-e']],13:[['稲 / 麻布台ヒルズ','day-e'],['稲 / 赤坂ガーデンシティ夜間','night-e']],14:[['稲 / 赤坂ガーデンシティ夜間','night-e']],15:[['稲 / 赤坂ガーデンシティ夜間','night-e']],16:[['稲 / 公文横浜','day-e']],
+  18:[['稲 / 赤坂ガーデンシティ夜間','night-e']],21:[['稲野辺','day-e']],22:[['稲 / 神南清水第一','day-e']],27:[['稲 / 新宿百人町','day-e']],29:[['稲 / 天王洲シーフォート','night-e']],
+  30:[['松田 / 神南清水','sub-e']],31:[['休み','muted']]
+};
+const notes = {
+  clean:['白背景で圧迫感を減らす','文字は太すぎず、日付と予定帯の差を出す','今のNINQから一番移行しやすい'],
+  deep:['ヘッダーと日付の存在感を強くする','白い日マスで予定帯の色が見えやすい','現場アプリらしい業務感が残る'],
+  cards:['日マスをカード風にして区切りを明確にする','予定帯を四角めにして情報量を増やす','PC版との見え方を近づけやすい'],
+  focus:['カレンダーは予定の有無確認に絞る','選択日の予定を下に大きく表示する','老眼対策として一番読みやすいが、一覧性は少し下がる']
+};
+function renderCalendar(){
+  const cal = document.getElementById('calendar');
+  cal.innerHTML = ['日','月','火','水','木','金','土'].map((d,i)=>`<div class="dow ${i===0?'sun':''}">${d}</div>`).join('') +
+    days.map(([num, cls, holiday], i)=>{
+      const dayEvents = events[i] || [];
+      return `<div class="day ${cls}"><div class="num">${num}</div>${holiday?`<span class="holiday-name">${holiday}</span>`:''}<div class="events">${dayEvents.map(([text,type])=>`<div class="event ${type}">${text}</div>`).join('')}</div></div>`;
+    }).join('');
+}
+function setPattern(pattern){
+  document.querySelectorAll('.tab').forEach(btn=>btn.classList.toggle('active',btn.dataset.pattern===pattern));
+  const phone = document.getElementById('phone');
+  phone.className = `phone-inner pattern-${pattern}`;
+  document.getElementById('notes').innerHTML = `<h2>${document.querySelector(`[data-pattern="${pattern}"]`).textContent}</h2><ul>${notes[pattern].map(item=>`<li>${item}</li>`).join('')}</ul>`;
+}
+document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>setPattern(btn.dataset.pattern)));
+renderCalendar();
+setPattern('clean');
+</script>
+</body>
+</html>
