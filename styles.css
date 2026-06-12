@@ -349,13 +349,14 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
   .cal-day:nth-child(7n){border-right:none}
   .cal-day.other{opacity:1;background:#fbfcfe}
   .cal-day.other .dn{color:#c4c9d0}
-  .cal-day.sel{background:#fff;box-shadow:inset 3px 0 0 rgba(31,41,55,.14)}
+  .cal-day.sel{background:#fff;box-shadow:none}
   .dn{width:100%;height:22px;margin:0 0 2px;border-radius:0;font-size:calc(var(--cal-date-size) - 3px);font-weight:650;line-height:1;justify-content:center;align-items:flex-start;color:#555b64}
   .cal-day.sun .dn{color:#e0565c}
   .cal-day.sat .dn{color:#35669d}
-  .cal-day.today{background:linear-gradient(90deg,#f0f1f3 0 38%,#fff 38% 100%)}
-  .cal-day.today .dn{width:26px;height:26px;margin:0 auto 1px;border-radius:50%;align-items:center;background:#343a40;color:#fff}
-  .cal-day.today.sun .dn,.cal-day.today.sat .dn{color:#fff}
+  .cal-day.today{background:#f0f1f3}
+  .cal-day.today .dn{width:100%;height:22px;margin:0 0 2px;border-radius:0;align-items:flex-start;background:transparent;color:#4b5563}
+  .cal-day.today.sun .dn{color:#e0565c}
+  .cal-day.today.sat .dn{color:#35669d}
   .task-stack{gap:3px;min-height:0}
   .cal-task{width:96%;margin:0 auto;border-radius:3px;padding:2px 4px;font-size:clamp(10px,calc(var(--cal-task-size) - 1px),14px);line-height:1.15;font-weight:750;display:block;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;word-break:normal;min-height:17px;text-align:center;box-shadow:none}
   .cal-task.cont-left{width:calc(100% + 4px);margin-left:-2px;padding-left:5px;border-top-left-radius:0;border-bottom-left-radius:0}
