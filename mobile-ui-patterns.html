@@ -84,6 +84,36 @@ body{min-height:100vh;background:#e9eff6;color:#172033;font-family:-apple-system
 .pattern-focus .selected-list{display:block}
 .pattern-focus .summary{grid-template-columns:1fr 1fr}
 .pattern-focus .detail{display:none}
+.pattern-ref{--app-bg:#fff;--top-bg:#fff;--month-bg:#fff;--cal-bg:#fff;--cell-bg:#fff;--cell-radius:0;--cell-border:0;--gap:0;--day-h:104px;--event-h:17px;--event-radius:2px;--event-font:11px;--num-font:14px;--num-size:22px;--summary-bg:#fff}
+.pattern-ref .top{color:#171717;border:1px solid #cfd4dc;border-bottom:none;margin:0 4px;padding:17px 18px 6px}
+.pattern-ref .brand{font-size:0}.pattern-ref .brand::before{content:'5月';font-size:28px;font-weight:850;letter-spacing:0}
+.pattern-ref .version,.pattern-ref .subline{display:none}
+.pattern-ref .menu{border:none;background:transparent;color:#1f2937;font-size:0;width:34px;height:34px}
+.pattern-ref .menu::before{content:'⚙';font-size:28px;line-height:1}
+.pattern-ref .month{margin:0 4px;padding:0 14px 6px;border-left:1px solid #cfd4dc;border-right:1px solid #cfd4dc;border-bottom:1px solid #cfd4dc;grid-template-columns:1fr}
+.pattern-ref .month strong{display:none}
+.pattern-ref .navbtn{display:none}
+.pattern-ref .calendar{margin:0 4px;padding:0;border-left:1px solid #cfd4dc;border-right:1px solid #cfd4dc;border-bottom:1px solid #cfd4dc}
+.pattern-ref .dow{font-size:13px;font-weight:700;color:#5f6670;padding:8px 0;border-bottom:1px solid #e5e7eb}
+.pattern-ref .dow.sun{color:#e04b63}
+.pattern-ref .day{border-right:1px solid #eef0f3;border-bottom:1px solid #eef0f3;padding:4px 2px;background:#fff}
+.pattern-ref .day:nth-child(7n+1){border-right:1px solid #eef0f3}
+.pattern-ref .day.other{opacity:.32}
+.pattern-ref .num{margin:0 auto 4px;color:#6b7280;font-weight:650}
+.pattern-ref .sun .num,.pattern-ref .holiday .num{color:#ef5a74}
+.pattern-ref .sat .num{color:#555f70}
+.pattern-ref .today{background:linear-gradient(90deg,#f1f1f1 0 38%,#fff 38% 100%)}
+.pattern-ref .today .num{background:#464b55;color:#fff;width:25px;height:25px;font-size:12px}
+.pattern-ref .holiday-name{font-size:7px;font-weight:700;color:#ef5a74}
+.pattern-ref .events{gap:2px;align-items:center}
+.pattern-ref .event{width:96%;margin:0 auto;padding:2px 4px;text-align:center;font-weight:800;box-shadow:none}
+.pattern-ref .event.day-e{background:#e9e88c;color:#242400}
+.pattern-ref .event.night-e{background:#f6d6ee;color:#30303a}
+.pattern-ref .event.sub-e{background:#8ddbd3;color:#143b38}
+.pattern-ref .event.muted{background:#9fd8ec;color:#173544}
+.pattern-ref .summary{padding:10px 4px 12px;grid-template-columns:1fr 1fr 60px}
+.pattern-ref .card{border-radius:8px;box-shadow:none;background:#fff;border-color:#e5e7eb}
+.pattern-ref .fab{background:#171717;color:#fff;box-shadow:0 10px 22px rgba(0,0,0,.28)}
 @media (max-width:820px){body{padding:10px}.head{display:block}.tabs{margin-top:12px}.stage{grid-template-columns:1fr}.notes{order:2}.phone{border-radius:24px}.fab{right:18px}}
 </style>
 </head>
@@ -99,13 +129,14 @@ body{min-height:100vh;background:#e9eff6;color:#172033;font-family:-apple-system
       <button class="tab" data-pattern="deep">B ネイビー</button>
       <button class="tab" data-pattern="cards">C カード型</button>
       <button class="tab" data-pattern="focus">D 予定優先</button>
+      <button class="tab" data-pattern="ref">E 参考画像寄せ</button>
     </div>
   </header>
   <section class="stage">
     <aside class="notes" id="notes"></aside>
     <div class="phone-wrap">
       <div class="phone">
-        <div class="phone-inner pattern-clean" id="phone">
+        <div class="phone-inner pattern-ref" id="phone">
           <div class="top">
             <div class="top-row">
               <div><span class="brand">NINQ</span><span class="version">mock</span></div>
@@ -154,7 +185,8 @@ const notes = {
   clean:['白背景で圧迫感を減らす','文字は太すぎず、日付と予定帯の差を出す','今のNINQから一番移行しやすい'],
   deep:['ヘッダーと日付の存在感を強くする','白い日マスで予定帯の色が見えやすい','現場アプリらしい業務感が残る'],
   cards:['日マスをカード風にして区切りを明確にする','予定帯を四角めにして情報量を増やす','PC版との見え方を近づけやすい'],
-  focus:['カレンダーは予定の有無確認に絞る','選択日の予定を下に大きく表示する','老眼対策として一番読みやすいが、一覧性は少し下がる']
+  focus:['カレンダーは予定の有無確認に絞る','選択日の予定を下に大きく表示する','老眼対策として一番読みやすいが、一覧性は少し下がる'],
+  ref:['参考画像のように白い余白を多めにする','予定帯を低く細くして月全体を見やすくする','追加ボタンは黒系にして操作点を分かりやすくする']
 };
 function renderCalendar(){
   const cal = document.getElementById('calendar');
@@ -172,7 +204,7 @@ function setPattern(pattern){
 }
 document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>setPattern(btn.dataset.pattern)));
 renderCalendar();
-setPattern('clean');
+setPattern('ref');
 </script>
 </body>
 </html>
