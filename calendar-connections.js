@@ -149,7 +149,7 @@
       #sc-cal .task-stack {
         display: grid !important;
         grid-template-rows: repeat(4, minmax(0, var(--cal-slot-height)));
-        gap: 2px;
+        gap: 4px;
         align-content: start;
         height: var(--cal-stack-height);
         position: relative;
@@ -170,10 +170,11 @@
         height: var(--cal-slot-height);
         min-height: var(--cal-slot-height);
         max-height: var(--cal-slot-height);
-        font-size: var(--cal-task-size);
+        font-size: min(var(--cal-task-size), calc(var(--cal-slot-height) - 5px));
+        line-height: 1;
         white-space: nowrap !important;
         overflow: hidden !important;
-        text-overflow: clip !important;
+        text-overflow: ellipsis !important;
         word-break: keep-all !important;
         -webkit-line-clamp: unset !important;
         pointer-events: none;
@@ -181,7 +182,7 @@
       #sc-cal .cal-task.night { grid-row: var(--slot, 2); }
       #sc-cal .cal-day.holiday .dn,
       #sc-cal .cal-day.holiday.sun .dn { color: var(--red); }
-      #sc-cal .cal-day.today.holiday .dn { color: #fff; }
+      #sc-cal .cal-day.today.holiday .dn { color: var(--red); }
       #sc-cal .holiday-name {
         display: block;
         min-height: 13px;
@@ -198,7 +199,7 @@
       @media (max-width: 480px) {
         #sc-cal .task-stack {
           grid-template-rows: repeat(4, minmax(0, var(--cal-slot-height)));
-          gap: 2px;
+          gap: 4px;
           height: var(--cal-stack-height);
         }
         #sc-cal .cal-task {
@@ -206,7 +207,7 @@
           height: var(--cal-slot-height);
           min-height: var(--cal-slot-height);
           max-height: var(--cal-slot-height);
-          line-height: 1.08;
+          line-height: 1;
         }
         #sc-cal .cal-task,
         #sc-cal .cal-task.cont-left,
