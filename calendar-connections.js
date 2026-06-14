@@ -267,7 +267,7 @@
         lines.push(`<div class="${window.calendarTaskClass(entry)}" style="--slot:${slot};--slot-top:${slotTop(slot)};--span:${span}">${label}</div>`);
       });
       const hiddenCount = Math.max(0, visibleItems.length - lines.length, items.length - 2);
-      const more = hiddenCount ? `<div class="more-chip" aria-label="ほかに${hiddenCount}件">… +${hiddenCount}</div>` : '';
+      const more = hiddenCount ? `<div class="more-chip" aria-label="ほかに${hiddenCount}件">他${hiddenCount}件</div>` : '';
       const holidayHtml = holiday ? `<span class="holiday-name">${escapeHtml(holiday)}</span>` : '<span class="holiday-name"></span>';
       rows.push(`<button class="${classes.join(' ')}" data-date="${ymd}"><span class="dn">${date.getDate()}</span>${holidayHtml}<div class="task-stack">${lines.join('')}</div>${more}</button>`);
     }

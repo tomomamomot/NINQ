@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.14-4';
+const APP_VERSION = 'v2026.06.14-5';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
@@ -621,7 +621,7 @@ function renderCalendar() {
     const displayedItems = [...items].sort((a, b) => companyEventTitle(a).localeCompare(companyEventTitle(b), 'ja') || String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
     const lines = displayedItems.slice(0, 4).map((entry) => `<div class="${calendarTaskClass(entry, ymd, date.getDay())}">${escapeHtml(companyEventTitle(entry))}</div>`).join('');
     const hiddenCount = Math.max(0, items.length - 4);
-    const more = hiddenCount ? `<div class="more-chip" aria-label="ほかに${hiddenCount}件">… +${hiddenCount}</div>` : '';
+    const more = hiddenCount ? `<div class="more-chip" aria-label="ほかに${hiddenCount}件">他${hiddenCount}件</div>` : '';
     rows.push(`<button class="${classes.join(' ')}" data-date="${ymd}"><span class="dn">${date.getDate()}</span><div class="task-stack">${lines}</div>${more}</button>`);
   }
   grid.innerHTML = rows.join('');
