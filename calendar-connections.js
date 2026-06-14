@@ -124,9 +124,9 @@
   }
 
   function slotTop(slot) {
-    if (slot === 2) return 'calc(var(--cal-slot-height) + 8px)';
-    if (slot === 3) return 'calc(var(--cal-slot-height) + var(--cal-slot-height) + 16px)';
-    if (slot === 4) return 'calc(var(--cal-slot-height) + var(--cal-slot-height) + var(--cal-slot-height) + 24px)';
+    if (slot === 2) return 'calc(var(--cal-slot-height) + 3px)';
+    if (slot === 3) return 'calc(var(--cal-slot-height) + var(--cal-slot-height) + 6px)';
+    if (slot === 4) return 'calc(var(--cal-slot-height) + var(--cal-slot-height) + var(--cal-slot-height) + 9px)';
     return '0px';
   }
 
@@ -155,7 +155,7 @@
       #sc-cal .task-stack { overflow: visible !important; }
       #sc-cal .task-stack {
         display: block !important;
-        height: calc(var(--cal-slot-height) * 3 + 16px);
+        height: calc(var(--cal-slot-height) * 3 + 6px);
         position: relative;
       }
       #sc-cal .cal-task,
@@ -184,7 +184,7 @@
         -webkit-line-clamp: unset !important;
         pointer-events: none;
       }
-      #sc-cal .cal-task.night { top: var(--slot-top, calc(var(--cal-slot-height) + 8px)); }
+      #sc-cal .cal-task.night { top: var(--slot-top, calc(var(--cal-slot-height) + 3px)); }
       #sc-cal .cal-day.holiday .dn,
       #sc-cal .cal-day.holiday.sun .dn { color: var(--red); }
       #sc-cal .cal-day.today.holiday .dn { color: #fff; }
@@ -204,7 +204,7 @@
       @media (max-width: 480px) {
         #sc-cal .task-stack {
           display: block !important;
-          height: calc(var(--cal-slot-height) * 3 + 16px);
+          height: calc(var(--cal-slot-height) * 3 + 6px);
         }
         #sc-cal .cal-task {
           width: calc((100% + 7px) * var(--span, 1) - 7px);
