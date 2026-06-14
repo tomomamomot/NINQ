@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.14-6';
+const APP_VERSION = 'v2026.06.14-7';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
@@ -531,6 +531,18 @@ function salesTotalForEntry(entry) {
 }
 function shiftLabel(shift) { return { day: '日勤', night: '夜勤', trip: '出張' }[shift] || '日勤'; }
 function shiftClass(shift) { return { day: 'day', night: 'night', trip: 'trip' }[shift] || 'day'; }
+function calendarDisplayOrder(entry) {
+  if (entry?.type === 'sub') return 3;
+  if (String(entry?.shift || 'day') === 'night') return 2;
+  return 1;
+}
+function sortEntriesForCalendarDisplay(items) {
+  return [...items].sort((a, b) => calendarDisplayOrder(a) - calendarDisplayOrder(b)
+    || String(a.company || '').localeCompare(String(b.company || ''), 'ja')
+    || String(a.site || '').localeCompare(String(b.site || ''), 'ja')
+    || String(a.workerName || '').localeCompare(String(b.workerName || ''), 'ja')
+    || String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+}
 function shiftSortValue(shift) { return { day: 1, trip: 2, night: 3 }[shift] || 9; }
 function sortEntriesForDemen(a, b) {
   return shiftSortValue(a.shift) - shiftSortValue(b.shift)
@@ -618,10 +630,10 @@ function renderCalendar() {
     if (ymd === selectedDate) classes.push('sel');
     if (ymd === toYmd(new Date())) classes.push('today');
     if (date.getDay() === 0) classes.push('sun'); if (date.getDay() === 6) classes.push('sat');
-    const displayedItems = [...items].sort((a, b) => companyEventTitle(a).localeCompare(companyEventTitle(b), 'ja') || String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+    const displayedItems = sortEntriesForCalendarDisplay(items);
     const lines = displayedItems.slice(0, 3).map((entry) => `<div class="${calendarTaskClass(entry, ymd, date.getDay())}">${escapeHtml(companyEventTitle(entry))}</div>`).join('');
     const hiddenCount = Math.max(0, items.length - 3);
-    const more = hiddenCount ? `<div class="more-chip" aria-label="ほかに${hiddenCount}件">他${hiddenCount}件</div>` : '';
+    const more = hiddenCount ? `<div class="more-chip" aria-label="ほかに${hiddenCount}件">+${hiddenCount}</div>` : '';
     rows.push(`<button class="${classes.join(' ')}" data-date="${ymd}"><span class="dn">${date.getDate()}</span><div class="task-stack">${lines}</div>${more}</button>`);
   }
   grid.innerHTML = rows.join('');
@@ -745,7 +757,7 @@ function renderDayEntries() {
   const title = document.getElementById('day-modal-title');
   const body = document.getElementById('day-modal-body');
   if (!modal || !title || !body) return;
-  const entries = dayEntries(selectedDate).sort(sortEntriesForDemen);
+  const entries = sortEntriesForCalendarDisplay(dayEntries(selectedDate));
   title.textContent = `${fmtDateJP(selectedDate)}（${weekdayLabel(selectedDate)}）`;
   if (!entries.length) {
     body.innerHTML = `<div class="day-mini-empty"><div class="empty" style="padding:22px 10px 8px"><div>この日の予定はありません</div><p>追加ボタンから登録できます。</p></div><button class="btn-primary" type="button" data-add-date="${selectedDate}">予定を追加</button></div>`;

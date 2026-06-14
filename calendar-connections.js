@@ -106,11 +106,8 @@
   }
 
   function shiftSlot(entry, usedSlots) {
-    const preferred = String(entry.shift || 'day') === 'night' ? 2 : 1;
+    const preferred = entry?.type === 'sub' ? 3 : (String(entry.shift || 'day') === 'night' ? 2 : 1);
     if (!usedSlots.has(preferred)) return preferred;
-    for (const slot of [1, 2, 3]) {
-      if (!usedSlots.has(slot)) return slot;
-    }
     return 0;
   }
 
@@ -134,13 +131,16 @@
   }
 
   function sortEntriesForCalendar(items) {
+    if (typeof window.sortEntriesForCalendarDisplay === 'function') {
+      return window.sortEntriesForCalendarDisplay(items);
+    }
     return [...items].sort((a, b) => {
-      const aNight = String(a.shift || 'day') === 'night' ? 1 : 0;
-      const bNight = String(b.shift || 'day') === 'night' ? 1 : 0;
-      return aNight - bNight
+      const aOrder = a?.type === 'sub' ? 3 : (String(a.shift || 'day') === 'night' ? 2 : 1);
+      const bOrder = b?.type === 'sub' ? 3 : (String(b.shift || 'day') === 'night' ? 2 : 1);
+      return aOrder - bOrder
         || String(a.company || '').localeCompare(String(b.company || ''), 'ja')
         || String(a.site || '').localeCompare(String(b.site || ''), 'ja')
-        || String(a.type || 'self').localeCompare(String(b.type || 'self'), 'ja')
+        || String(a.workerName || '').localeCompare(String(b.workerName || ''), 'ja')
         || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
     });
   }
@@ -270,7 +270,7 @@
         lines.push(`<div class="${window.calendarTaskClass(entry)}" style="--slot:${slot};--slot-top:${slotTop(slot)};--span:${span}">${label}</div>`);
       });
       const hiddenCount = Math.max(0, visibleItems.length - lines.length, items.length - 3);
-      const more = hiddenCount ? `<div class="more-chip" aria-label="ほかに${hiddenCount}件">他${hiddenCount}件</div>` : '';
+      const more = hiddenCount ? `<div class="more-chip" aria-label="ほかに${hiddenCount}件">+${hiddenCount}</div>` : '';
       const holidayHtml = holiday ? `<span class="holiday-name">${escapeHtml(holiday)}</span>` : '<span class="holiday-name"></span>';
       rows.push(`<button class="${classes.join(' ')}" data-date="${ymd}"><span class="dn">${date.getDate()}</span>${holidayHtml}<div class="task-stack">${lines.join('')}</div>${more}</button>`);
     }
