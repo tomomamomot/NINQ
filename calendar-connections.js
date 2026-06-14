@@ -108,9 +108,6 @@
   function shiftSlot(entry, usedSlots) {
     const preferred = String(entry.shift || 'day') === 'night' ? 2 : 1;
     if (!usedSlots.has(preferred)) return preferred;
-    for (const slot of [3, 4]) {
-      if (!usedSlots.has(slot)) return slot;
-    }
     return 0;
   }
 
@@ -155,7 +152,7 @@
       #sc-cal .task-stack { overflow: visible !important; }
       #sc-cal .task-stack {
         display: block !important;
-        height: var(--cal-stack-height);
+        height: calc(var(--cal-slot-height) * 2 + 10px);
         position: relative;
       }
       #sc-cal .cal-task,
@@ -204,7 +201,7 @@
       @media (max-width: 480px) {
         #sc-cal .task-stack {
           display: block !important;
-          height: var(--cal-stack-height);
+          height: calc(var(--cal-slot-height) * 2 + 10px);
         }
         #sc-cal .cal-task {
           width: calc((100% + 7px) * var(--span, 1) - 7px);
@@ -269,7 +266,7 @@
         const label = escapeHtml(companyEventTitle(entry));
         lines.push(`<div class="${window.calendarTaskClass(entry)}" style="--slot:${slot};--slot-top:${slotTop(slot)};--span:${span}">${label}</div>`);
       });
-      const hiddenCount = Math.max(0, visibleItems.length - lines.length, items.length - 4);
+      const hiddenCount = Math.max(0, visibleItems.length - lines.length, items.length - 2);
       const more = hiddenCount ? `<div class="more-chip" aria-label="ほかに${hiddenCount}件">… +${hiddenCount}</div>` : '';
       const holidayHtml = holiday ? `<span class="holiday-name">${escapeHtml(holiday)}</span>` : '<span class="holiday-name"></span>';
       rows.push(`<button class="${classes.join(' ')}" data-date="${ymd}"><span class="dn">${date.getDate()}</span>${holidayHtml}<div class="task-stack">${lines.join('')}</div>${more}</button>`);
