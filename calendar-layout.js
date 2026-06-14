@@ -162,11 +162,13 @@
           font-size: var(--cal-date-size);
         }
         #sc-cal .cal-day.today .dn {
-          width: 100%;
-          height: 22px;
-          border-radius: 0;
-          background: transparent;
-          color: #4b5563;
+          width: 28px;
+          height: 28px;
+          margin: 0 auto 2px;
+          border-radius: 50%;
+          align-items: center;
+          background: #4b5563;
+          color: #fff;
         }
         #sc-cal .cal-task {
           display: flex;
