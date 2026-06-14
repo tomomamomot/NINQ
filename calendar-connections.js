@@ -126,6 +126,13 @@
     }
   }
 
+  function slotTop(slot) {
+    if (slot === 2) return 'calc(var(--cal-slot-height) + 8px)';
+    if (slot === 3) return 'calc(var(--cal-slot-height) + var(--cal-slot-height) + 16px)';
+    if (slot === 4) return 'calc(var(--cal-slot-height) + var(--cal-slot-height) + var(--cal-slot-height) + 24px)';
+    return '0px';
+  }
+
   function sortEntriesForCalendar(items) {
     return [...items].sort((a, b) => {
       const aNight = String(a.shift || 'day') === 'night' ? 1 : 0;
@@ -147,10 +154,7 @@
       #sc-cal .cal-day,
       #sc-cal .task-stack { overflow: visible !important; }
       #sc-cal .task-stack {
-        display: grid !important;
-        grid-template-rows: repeat(4, minmax(0, var(--cal-slot-height)));
-        gap: 6px;
-        align-content: start;
+        display: block !important;
         height: var(--cal-stack-height);
         position: relative;
       }
@@ -161,8 +165,9 @@
         border-radius: 4px !important;
       }
       #sc-cal .cal-task {
-        grid-row: var(--slot, 1);
-        position: relative;
+        position: absolute;
+        top: var(--slot-top, 0px);
+        left: 0;
         z-index: 3;
         width: calc((100% + 13px) * var(--span, 1) - 13px);
         display: flex !important;
@@ -179,7 +184,7 @@
         -webkit-line-clamp: unset !important;
         pointer-events: none;
       }
-      #sc-cal .cal-task.night { grid-row: var(--slot, 2); }
+      #sc-cal .cal-task.night { top: var(--slot-top, calc(var(--cal-slot-height) + 8px)); }
       #sc-cal .cal-day.holiday .dn,
       #sc-cal .cal-day.holiday.sun .dn { color: var(--red); }
       #sc-cal .cal-day.today.holiday .dn { color: #fff; }
@@ -198,8 +203,7 @@
       }
       @media (max-width: 480px) {
         #sc-cal .task-stack {
-          grid-template-rows: repeat(4, minmax(0, var(--cal-slot-height)));
-          gap: 6px;
+          display: block !important;
           height: var(--cal-stack-height);
         }
         #sc-cal .cal-task {
@@ -263,7 +267,7 @@
         const span = bandSpan(ymd, entry, col);
         reserveBandSpan(slotReservations, ymd, span, slot);
         const label = escapeHtml(companyEventTitle(entry));
-        lines.push(`<div class="${window.calendarTaskClass(entry)}" style="--slot:${slot};--span:${span}">${label}</div>`);
+        lines.push(`<div class="${window.calendarTaskClass(entry)}" style="--slot:${slot};--slot-top:${slotTop(slot)};--span:${span}">${label}</div>`);
       });
       const hiddenCount = Math.max(0, visibleItems.length - lines.length, items.length - 4);
       const more = hiddenCount ? `<div class="more-chip" aria-label="ほかに${hiddenCount}件">… +${hiddenCount}</div>` : '';

@@ -14,17 +14,17 @@ body[data-ui-size="6"]{--body-size:22px;--cal-day-min:174px;--cal-date-size:28px
 body[data-ui-size="large"]{--body-size:18px;--cal-day-min:124px;--cal-date-size:20px;--cal-task-size:13.5px;--cal-task-line:1.3;--modal-title-size:22px;--modal-site-size:20px;--modal-meta-size:15.5px;--expense-chip-size:14px;--field-label-size:17px;--control-size:18px}
 body[data-ui-size="xlarge"]{--body-size:19px;--cal-day-min:138px;--cal-date-size:22px;--cal-task-size:15px;--cal-task-line:1.32;--modal-title-size:24px;--modal-site-size:22px;--modal-meta-size:17px;--expense-chip-size:15px;--field-label-size:18px;--control-size:19px}
 :root{--month-label-size:21px;--cal-dow-size:15px;--summary-label-size:13px;--summary-value-size:24px;--more-chip-size:11px}
-:root{--cal-slot-height:20px;--cal-stack-height:calc(var(--cal-slot-height) * 4 + 18px);--holiday-name-size:9px}
+:root{--cal-slot-height:20px;--cal-stack-height:calc(var(--cal-slot-height) * 4 + 30px);--holiday-name-size:9px}
 body[data-ui-size="2"],body[data-ui-size="large"]{--month-label-size:24px;--cal-dow-size:16px;--summary-label-size:14px;--summary-value-size:26px;--more-chip-size:12px}
 body[data-ui-size="3"],body[data-ui-size="xlarge"]{--month-label-size:27px;--cal-dow-size:17px;--summary-label-size:15px;--summary-value-size:28px;--more-chip-size:13px}
 body[data-ui-size="4"]{--month-label-size:30px;--cal-dow-size:18px;--summary-label-size:16px;--summary-value-size:30px;--more-chip-size:14px}
 body[data-ui-size="5"]{--month-label-size:32px;--cal-dow-size:19px;--summary-label-size:17px;--summary-value-size:32px;--more-chip-size:15px}
 body[data-ui-size="6"]{--month-label-size:34px;--cal-dow-size:20px;--summary-label-size:18px;--summary-value-size:34px;--more-chip-size:16px}
-body[data-ui-size="2"],body[data-ui-size="large"]{--cal-slot-height:22px;--cal-stack-height:calc(var(--cal-slot-height) * 4 + 18px);--holiday-name-size:10px}
-body[data-ui-size="3"],body[data-ui-size="xlarge"]{--cal-slot-height:24px;--cal-stack-height:calc(var(--cal-slot-height) * 4 + 18px);--holiday-name-size:11px}
-body[data-ui-size="4"]{--cal-slot-height:26px;--cal-stack-height:calc(var(--cal-slot-height) * 4 + 18px);--holiday-name-size:12px}
-body[data-ui-size="5"]{--cal-slot-height:28px;--cal-stack-height:calc(var(--cal-slot-height) * 4 + 18px);--holiday-name-size:13px}
-body[data-ui-size="6"]{--cal-slot-height:30px;--cal-stack-height:calc(var(--cal-slot-height) * 4 + 18px);--holiday-name-size:14px}
+body[data-ui-size="2"],body[data-ui-size="large"]{--cal-slot-height:22px;--cal-stack-height:calc(var(--cal-slot-height) * 4 + 30px);--holiday-name-size:10px}
+body[data-ui-size="3"],body[data-ui-size="xlarge"]{--cal-slot-height:24px;--cal-stack-height:calc(var(--cal-slot-height) * 4 + 30px);--holiday-name-size:11px}
+body[data-ui-size="4"]{--cal-slot-height:26px;--cal-stack-height:calc(var(--cal-slot-height) * 4 + 30px);--holiday-name-size:12px}
+body[data-ui-size="5"]{--cal-slot-height:28px;--cal-stack-height:calc(var(--cal-slot-height) * 4 + 30px);--holiday-name-size:13px}
+body[data-ui-size="6"]{--cal-slot-height:30px;--cal-stack-height:calc(var(--cal-slot-height) * 4 + 30px);--holiday-name-size:14px}
 body[data-font="meiryo"]{--app-font:Meiryo,'Hiragino Sans','Noto Sans JP',sans-serif}
 body[data-font="thin"]{--app-font:'Hiragino Sans','Yu Gothic UI','Segoe UI',sans-serif}
 body[data-font="gothic"]{--app-font:'BIZ UDPGothic','Yu Gothic UI',Meiryo,'Noto Sans JP',sans-serif}
