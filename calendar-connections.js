@@ -169,7 +169,7 @@
         top: var(--slot-top, 0px);
         left: 0;
         z-index: 3;
-        width: calc((100% + 13px) * var(--span, 1) - 13px);
+        width: calc(100% * var(--span, 1));
         display: flex !important;
         align-items: center;
         height: var(--cal-slot-height);
@@ -207,7 +207,7 @@
           height: calc(var(--cal-slot-height) * 3 + 6px);
         }
         #sc-cal .cal-task {
-          width: calc((100% + 7px) * var(--span, 1) - 7px);
+          width: calc(100% * var(--span, 1));
           height: var(--cal-slot-height);
           min-height: var(--cal-slot-height);
           max-height: var(--cal-slot-height);
