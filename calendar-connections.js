@@ -169,7 +169,7 @@
         top: var(--slot-top, 0px);
         left: 0;
         z-index: 3;
-        width: calc(100% * var(--span, 1));
+        width: calc(100% * var(--span, 1) + 4px * var(--bridge, 0));
         display: flex !important;
         align-items: center;
         height: var(--cal-slot-height);
@@ -207,7 +207,7 @@
           height: calc(var(--cal-slot-height) * 3 + 6px);
         }
         #sc-cal .cal-task {
-          width: calc(100% * var(--span, 1));
+          width: calc(100% * var(--span, 1) + 4px * var(--bridge, 0));
           height: var(--cal-slot-height);
           min-height: var(--cal-slot-height);
           max-height: var(--cal-slot-height);
@@ -267,7 +267,7 @@
         const span = bandSpan(ymd, entry, col);
         reserveBandSpan(slotReservations, ymd, span, slot);
         const label = escapeHtml(companyEventTitle(entry));
-        lines.push(`<div class="${window.calendarTaskClass(entry)}" style="--slot:${slot};--slot-top:${slotTop(slot)};--span:${span}">${label}</div>`);
+        lines.push(`<div class="${window.calendarTaskClass(entry)}" style="--slot:${slot};--slot-top:${slotTop(slot)};--span:${span};--bridge:${Math.max(0, span - 1)}">${label}</div>`);
       });
       const hiddenCount = Math.max(0, visibleItems.length - lines.length, items.length - 3);
       const more = hiddenCount ? `<div class="more-chip" aria-label="ほかに${hiddenCount}件">+${hiddenCount}</div>` : '';
