@@ -80,6 +80,8 @@
   window.ninqHolidayName = holidayName;
 
   function bandKey(entry) {
+    const rangeGroupId = String(entry?.rangeGroupId || '').trim();
+    if (rangeGroupId) return `range:${rangeGroupId}`;
     const company = String(entry?.company || '').trim();
     const site = String(entry?.site || '').trim();
     if (!company || !site) return '';

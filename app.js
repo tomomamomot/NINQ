@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.06.20-1';
+const APP_VERSION = 'v2026.07.01-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
@@ -65,6 +65,7 @@ let sheetSelection = null;
 let sheetMouseSelecting = false;
 let printCleanupTimer = null;
 let openCompanyPresetId = '';
+let expenseQuickEditTarget = null;
 
 function loadState() {
   try {
@@ -302,8 +303,8 @@ function modalExpenseItems() {
 }
 function renderEntryExpenseChips(entry) {
   const chips = coreExpenseItems()
-    .map((item) => ({ label: item.label, value: num(entry.expenses?.[item.id]) }));
-  return `<div class="day-mini-expenses">${chips.map((item) => `<span>${escapeHtml(item.label)} ${yen(item.value)}</span>`).join('')}</div>`;
+    .map((item) => ({ id: item.id, label: item.label, value: num(entry.expenses?.[item.id]) }));
+  return `<div class="day-mini-expenses">${chips.map((item) => `<button class="day-mini-expense-chip" type="button" data-expense-entry-id="${escapeHtml(entry.id)}" data-expense-id="${escapeHtml(item.id)}"><span>${escapeHtml(item.label)}</span><strong>${yen(item.value)}</strong></button>`).join('')}</div>`;
 }
 function applyDisplayPreferences() {
   cleanupLegacyDisplayPreferences();
@@ -781,6 +782,62 @@ function openDayModal(date) {
 function closeDayModal() {
   isDayModalOpen = false;
   document.getElementById('day-modal-bg')?.classList.remove('open');
+}
+
+function expenseItemById(expenseId) {
+  return [...coreExpenseItems(), ...expenseItems()].find((item) => item.id === expenseId) || { id: expenseId, label: '経費' };
+}
+
+function ensureExpenseQuickEditModal() {
+  let modal = document.getElementById('expense-quick-edit-bg');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'expense-quick-edit-bg';
+  modal.className = 'expense-quick-edit-bg';
+  modal.innerHTML = `
+    <div class="expense-quick-edit" role="dialog" aria-modal="true" aria-labelledby="expense-quick-title">
+      <div class="expense-quick-title" id="expense-quick-title">経費を入力</div>
+      <label class="expense-quick-label" for="expense-quick-amount"><span id="expense-quick-name">経費</span></label>
+      <input class="expense-quick-input" id="expense-quick-amount" type="number" min="0" step="1" inputmode="numeric">
+      <div class="expense-quick-actions">
+        <button class="btn-secondary" type="button" data-expense-quick-cancel>キャンセル</button>
+        <button class="btn-primary" type="button" data-expense-quick-save>保存</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function openExpenseQuickEdit(entryId, expenseId) {
+  const entry = state.entries.find((item) => item.id === entryId);
+  if (!entry) return;
+  const expense = expenseItemById(expenseId);
+  expenseQuickEditTarget = { entryId, expenseId };
+  const modal = ensureExpenseQuickEditModal();
+  modal.querySelector('#expense-quick-name').textContent = expense.label;
+  const input = modal.querySelector('#expense-quick-amount');
+  input.value = num(entry.expenses?.[expenseId]) || '';
+  modal.classList.add('open');
+  setTimeout(() => { input.focus(); input.select(); }, 0);
+}
+
+function closeExpenseQuickEdit() {
+  expenseQuickEditTarget = null;
+  document.getElementById('expense-quick-edit-bg')?.classList.remove('open');
+}
+
+function saveExpenseQuickEdit() {
+  if (!expenseQuickEditTarget) return;
+  const entry = state.entries.find((item) => item.id === expenseQuickEditTarget.entryId);
+  const input = document.getElementById('expense-quick-amount');
+  if (!entry || !input) { closeExpenseQuickEdit(); return; }
+  entry.expenses = { ...(entry.expenses || {}) };
+  entry.expenses[expenseQuickEditTarget.expenseId] = num(input.value);
+  entry.updatedAt = new Date().toISOString();
+  closeExpenseQuickEdit();
+  saveState();
+  renderAll();
+  scheduleDriveAutoSync({ delay: 900, message: '経費をクラウドへ保存します...' });
 }
 function openSheetPage() {
   if (activeScreen !== 'cal') return;
@@ -2714,6 +2771,10 @@ function bindEvents() {
   ['tgl-sales-labor', 'tgl-sales-overtime', 'tgl-sales-expenses'].forEach((id) => document.getElementById(id)?.addEventListener('click', () => { document.getElementById(id).classList.toggle('on'); scheduleSettingsAutosave({ immediate: true, section: 'display' }); }));
   document.getElementById('modal-bg').addEventListener('click', (event) => { if (event.target.id === 'modal-bg') closeModal(); });
   document.addEventListener('click', (event) => {
+    if (event.target.id === 'expense-quick-edit-bg' || event.target.closest('[data-expense-quick-cancel]')) { closeExpenseQuickEdit(); return; }
+    if (event.target.closest('[data-expense-quick-save]')) { saveExpenseQuickEdit(); return; }
+    const expenseChip = event.target.closest('[data-expense-entry-id][data-expense-id]');
+    if (expenseChip) { openExpenseQuickEdit(expenseChip.dataset.expenseEntryId, expenseChip.dataset.expenseId); return; }
     if (event.target.id === 'date-picker-bg' || event.target.matches('[data-date-picker-cancel]')) { closeDatePicker(); return; }
     if (event.target.matches('[data-date-picker-ok]')) { commitDatePicker(); return; }
     if (event.target.matches('[data-date-picker-prev]')) { datePickerCursor = new Date(datePickerCursor.getFullYear(), datePickerCursor.getMonth() - 1, 1); renderDatePicker(); return; }
