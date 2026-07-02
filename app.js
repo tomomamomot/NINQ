@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.02-3';
+const APP_VERSION = 'v2026.07.02-4';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
@@ -1025,8 +1025,9 @@ function entriesForInvoiceCompany() {
   return entriesForInvoiceCompanyName(selectedCompany);
 }
 const DEMEN_COL_WIDTHS = [34, 210, 44, 70, 72, 54, 78, 78, 68, 74, 68, 74, 68, 78, 82];
+const DEMEN_COL_WIDTH_TOTAL = DEMEN_COL_WIDTHS.reduce((sum, width) => sum + width, 0);
 function demenColgroup() {
-  return `<colgroup>${DEMEN_COL_WIDTHS.map((width) => `<col style="width:${width}px">`).join('')}</colgroup>`;
+  return `<colgroup>${DEMEN_COL_WIDTHS.map((width) => `<col style="width:${((width / DEMEN_COL_WIDTH_TOTAL) * 100).toFixed(4)}%">`).join('')}</colgroup>`;
 }
 function invoiceTotals(entries) {
   const rows = entries.map((entry) => ({ entry, calc: calcEntry(entry) }));
