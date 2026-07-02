@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.02-2';
+const APP_VERSION = 'v2026.07.02-3';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
@@ -66,6 +66,7 @@ let sheetMouseSelecting = false;
 let printCleanupTimer = null;
 let openCompanyPresetId = '';
 let expenseQuickEditTarget = null;
+let expenseQuickViewportBound = false;
 
 function loadState() {
   try {
@@ -788,6 +789,32 @@ function expenseItemById(expenseId) {
   return [...coreExpenseItems(), ...expenseItems()].find((item) => item.id === expenseId) || { id: expenseId, label: '経費' };
 }
 
+function resetExpenseQuickPosition() {
+  const modal = document.getElementById('expense-quick-edit-bg');
+  if (!modal) return;
+  modal.classList.remove('keyboard-active');
+  modal.style.removeProperty('--expense-quick-top');
+}
+
+function updateExpenseQuickPosition() {
+  const modal = document.getElementById('expense-quick-edit-bg');
+  const input = document.getElementById('expense-quick-amount');
+  const dialog = modal?.querySelector('.expense-quick-edit');
+  if (!modal?.classList.contains('open') || !input || document.activeElement !== input) {
+    resetExpenseQuickPosition();
+    return;
+  }
+  modal.classList.add('keyboard-active');
+  const viewport = window.visualViewport;
+  const visibleHeight = viewport?.height || window.innerHeight || 520;
+  const offsetTop = viewport?.offsetTop || 0;
+  const dialogHeight = dialog?.offsetHeight || 220;
+  const lowestTop = Math.max(72, visibleHeight - dialogHeight - 18);
+  const preferredTop = Math.max(104, Math.round(visibleHeight * 0.24));
+  const top = Math.round(offsetTop + Math.min(preferredTop, lowestTop));
+  modal.style.setProperty('--expense-quick-top', `${top}px`);
+}
+
 function ensureExpenseQuickEditModal() {
   let modal = document.getElementById('expense-quick-edit-bg');
   if (modal) return modal;
@@ -805,6 +832,15 @@ function ensureExpenseQuickEditModal() {
       <input class="expense-quick-input" id="expense-quick-amount" type="number" min="0" step="1" inputmode="numeric">
     </div>`;
   document.body.appendChild(modal);
+  const input = modal.querySelector('#expense-quick-amount');
+  input?.addEventListener('focus', () => requestAnimationFrame(updateExpenseQuickPosition));
+  input?.addEventListener('blur', () => setTimeout(updateExpenseQuickPosition, 120));
+  if (!expenseQuickViewportBound) {
+    expenseQuickViewportBound = true;
+    window.visualViewport?.addEventListener('resize', updateExpenseQuickPosition);
+    window.visualViewport?.addEventListener('scroll', updateExpenseQuickPosition);
+    window.addEventListener('resize', updateExpenseQuickPosition);
+  }
   return modal;
 }
 
@@ -818,12 +854,15 @@ function openExpenseQuickEdit(entryId, expenseId) {
   const input = modal.querySelector('#expense-quick-amount');
   input.value = num(entry.expenses?.[expenseId]) || '';
   modal.classList.add('open');
-  setTimeout(() => { input.focus(); input.select(); }, 0);
+  requestAnimationFrame(updateExpenseQuickPosition);
+  setTimeout(() => { input.focus(); input.select(); updateExpenseQuickPosition(); }, 0);
 }
 
 function closeExpenseQuickEdit() {
   expenseQuickEditTarget = null;
-  document.getElementById('expense-quick-edit-bg')?.classList.remove('open');
+  const modal = document.getElementById('expense-quick-edit-bg');
+  modal?.classList.remove('open');
+  resetExpenseQuickPosition();
 }
 
 function saveExpenseQuickEdit() {
