@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.02-6';
+const APP_VERSION = 'v2026.07.02-7';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
@@ -138,14 +138,17 @@ function companySheetNameFromOfficial(name) {
     .trim();
   return stripped || value;
 }
+function normalizeInvoiceHonorific(value) {
+  return String(value || '').trim() === '様' ? '様' : '御中';
+}
 function normalizeCompanyRates(items, companies = []) {
   const source = Array.isArray(items) ? items : [];
   const mapped = source.map((item) => {
-    if (typeof item === 'string') return { id: crypto.randomUUID(), name: item, sheetName: companySheetNameFromOfficial(item), officialName: item, dayRate: 0, nightRate: 0, otRate: 0, closingDay: 0 };
+    if (typeof item === 'string') return { id: crypto.randomUUID(), name: item, sheetName: companySheetNameFromOfficial(item), officialName: item, invoiceHonorific: '御中', dayRate: 0, nightRate: 0, otRate: 0, closingDay: 0 };
     const name = String(item.name || item.company || '').trim();
     const officialName = String(item.officialName || item.formalName || name).trim();
     const sheetName = String(item.sheetName || item.displayName || companySheetNameFromOfficial(officialName || name)).trim();
-    return { id: String(item.id || crypto.randomUUID()), name, sheetName: sheetName || name, officialName, dayRate: num(item.dayRate), nightRate: num(item.nightRate), otRate: num(item.otRate), closingDay: closingDayValue(item.closingDay) };
+    return { id: String(item.id || crypto.randomUUID()), name, sheetName: sheetName || name, officialName, invoiceHonorific: normalizeInvoiceHonorific(item.invoiceHonorific || item.honorific), dayRate: num(item.dayRate), nightRate: num(item.nightRate), otRate: num(item.otRate), closingDay: closingDayValue(item.closingDay) };
   }).filter((item) => item.name);
   const deduped = [];
   mapped.forEach((item) => {
@@ -153,6 +156,7 @@ function normalizeCompanyRates(items, companies = []) {
     if (existing) {
       existing.officialName = item.officialName || existing.officialName || item.name;
       existing.sheetName = item.sheetName || existing.sheetName || companySheetNameFromOfficial(existing.officialName || item.name);
+      existing.invoiceHonorific = item.invoiceHonorific || existing.invoiceHonorific || '御中';
       existing.dayRate = item.dayRate || existing.dayRate;
       existing.nightRate = item.nightRate || existing.nightRate;
       existing.otRate = item.otRate || existing.otRate;
@@ -161,7 +165,7 @@ function normalizeCompanyRates(items, companies = []) {
       deduped.push(item);
     }
   });
-  companies.filter(Boolean).forEach((name) => { if (!deduped.some((item) => item.name === name)) deduped.push({ id: crypto.randomUUID(), name, sheetName: companySheetNameFromOfficial(name), officialName: name, dayRate: 0, nightRate: 0, otRate: 0, closingDay: 0 }); });
+  companies.filter(Boolean).forEach((name) => { if (!deduped.some((item) => item.name === name)) deduped.push({ id: crypto.randomUUID(), name, sheetName: companySheetNameFromOfficial(name), officialName: name, invoiceHonorific: '御中', dayRate: 0, nightRate: 0, otRate: 0, closingDay: 0 }); });
   return deduped;
 }
 function normalizeReceipt(receipt) {
@@ -337,6 +341,7 @@ function companyOptions() { return companyPresets().map((item) => item.name).sor
 function companyPresets() { return normalizeCompanyRates(state.settings.companyRates, state.settings.companies); }
 function companyPresetByName(name) { return companyPresets().find((item) => item.name === name); }
 function companyOfficialName(name) { return (companyPresetByName(name) || companyPresetByAnyName(name))?.officialName || name; }
+function companyInvoiceHonorific(name) { return normalizeInvoiceHonorific((companyPresetByName(name) || companyPresetByAnyName(name))?.invoiceHonorific); }
 function companySheetName(name) { const preset = companyPresetByName(name) || companyPresetByAnyName(name); return preset?.sheetName || companySheetNameFromOfficial(preset?.officialName || name); }
 function companyPresetByAnyName(value) {
   const key = String(value || '').trim();
@@ -436,6 +441,7 @@ renderCompanyPresetList = function renderCompanyPresetList() {
         <input class="st-input company-rate-name-input" data-company-preset-field="name" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.name)}" placeholder="略名（カレンダー）">
         <input class="st-input company-rate-name-input" data-company-preset-field="sheetName" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.sheetName || companySheetNameFromOfficial(preset.officialName || preset.name))}" placeholder="出面表表示名">
         <input class="st-input company-rate-name-input" data-company-preset-field="officialName" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.officialName || preset.name)}" placeholder="請求書正式名称">
+        <select class="st-select company-honorific-select" data-company-preset-field="invoiceHonorific" data-company-preset-id="${escapeHtml(preset.id)}" aria-label="請求書敬称"><option value="御中" ${normalizeInvoiceHonorific(preset.invoiceHonorific) === '御中' ? 'selected' : ''}>御中</option><option value="様" ${normalizeInvoiceHonorific(preset.invoiceHonorific) === '様' ? 'selected' : ''}>様</option></select>
         <input class="st-input" type="number" inputmode="numeric" data-company-preset-field="dayRate" data-company-preset-id="${escapeHtml(preset.id)}" value="${rateFieldValue(preset.dayRate)}" placeholder="日勤">
         <input class="st-input" type="number" inputmode="numeric" data-company-preset-field="nightRate" data-company-preset-id="${escapeHtml(preset.id)}" value="${rateFieldValue(preset.nightRate)}" placeholder="夜勤">
         <input class="st-input" type="number" inputmode="numeric" data-company-preset-field="otRate" data-company-preset-id="${escapeHtml(preset.id)}" value="${rateFieldValue(preset.otRate)}" placeholder="残業">
@@ -474,6 +480,7 @@ function mergeCompanyPresetLists(localSettings, remoteSettings) {
       name: preferred.name || fallback.name,
       officialName: preferred.officialName || fallback.officialName || preferred.name || fallback.name,
       sheetName: preferred.sheetName || fallback.sheetName || companySheetNameFromOfficial(preferred.officialName || fallback.officialName || preferred.name || fallback.name),
+      invoiceHonorific: normalizeInvoiceHonorific(preferred.invoiceHonorific || fallback.invoiceHonorific),
       dayRate: num(preferred.dayRate) || num(fallback.dayRate),
       nightRate: num(preferred.nightRate) || num(fallback.nightRate),
       otRate: num(preferred.otRate) || num(fallback.otRate),
@@ -525,6 +532,8 @@ function updateCompanyPresetField(id, field, value) {
   } else if (field === 'officialName') {
     item.officialName = value.trim();
     item.sheetName = item.sheetName || companySheetNameFromOfficial(item.officialName || item.name);
+  } else if (field === 'invoiceHonorific') {
+    item.invoiceHonorific = normalizeInvoiceHonorific(value);
   } else {
     item[field] = num(value);
   }
@@ -536,12 +545,22 @@ function ensureCompanySheetNameInput() {
   const officialInput = document.getElementById('st-company-official-new');
   if (nameInput) nameInput.placeholder = '略名 例: マル';
   if (officialInput) officialInput.placeholder = '請求書正式名称 例: 株式会社マルヒロアート';
-  if (!nameInput || document.getElementById('st-company-sheet-new')) return;
-  const input = document.createElement('input');
-  input.id = 'st-company-sheet-new';
-  input.className = 'st-input';
-  input.placeholder = '出面表表示名 例: マルヒロアート';
-  nameInput.insertAdjacentElement('afterend', input);
+  if (!nameInput) return;
+  if (!document.getElementById('st-company-sheet-new')) {
+    const input = document.createElement('input');
+    input.id = 'st-company-sheet-new';
+    input.className = 'st-input';
+    input.placeholder = '出面表表示名 例: マルヒロアート';
+    nameInput.insertAdjacentElement('afterend', input);
+  }
+  if (!document.getElementById('st-company-honorific-new') && officialInput) {
+    const select = document.createElement('select');
+    select.id = 'st-company-honorific-new';
+    select.className = 'st-select';
+    select.setAttribute('aria-label', '請求書敬称');
+    select.innerHTML = '<option value="御中">御中</option><option value="様">様</option>';
+    officialInput.insertAdjacentElement('afterend', select);
+  }
 }
 function renderSettingListEditors() { ensureCompanySheetNameInput(); renderCompanyPresetList(); renderEditableList('st-expense-list', 'st-expenses'); }
 function addCompanyPreset() {
@@ -551,11 +570,13 @@ function addCompanyPreset() {
   const id = crypto.randomUUID();
   const officialName = document.getElementById('st-company-official-new')?.value.trim() || name;
   const sheetName = document.getElementById('st-company-sheet-new')?.value.trim() || companySheetNameFromOfficial(officialName);
-  next.push({ id, name, sheetName, officialName, dayRate: num(document.getElementById('st-company-day-new')?.value), nightRate: num(document.getElementById('st-company-night-new')?.value), otRate: num(document.getElementById('st-company-ot-new')?.value), closingDay: closingDayValue(document.getElementById('st-company-closing-new')?.value) });
+  const invoiceHonorific = normalizeInvoiceHonorific(document.getElementById('st-company-honorific-new')?.value);
+  next.push({ id, name, sheetName, officialName, invoiceHonorific, dayRate: num(document.getElementById('st-company-day-new')?.value), nightRate: num(document.getElementById('st-company-night-new')?.value), otRate: num(document.getElementById('st-company-ot-new')?.value), closingDay: closingDayValue(document.getElementById('st-company-closing-new')?.value) });
   writeCompanyPresetValues(next);
   openCompanyPresetId = id;
   ['st-company-new', 'st-company-sheet-new', 'st-company-official-new', 'st-company-day-new', 'st-company-night-new', 'st-company-ot-new'].forEach((id) => { const el = document.getElementById(id); if (el) el.value = ''; });
   const closing = document.getElementById('st-company-closing-new'); if (closing) closing.value = '0';
+  const honorific = document.getElementById('st-company-honorific-new'); if (honorific) honorific.value = '御中';
   renderCompanyPresetList();
   scheduleSettingsAutosave({ immediate: true, section: 'companies' });
 }
@@ -1135,7 +1156,7 @@ function buildInvoiceSheet(entries, totals, hidden) {
         <div class="invoice-title">御　請　求　書</div>
         <div class="invoice-date">${invoiceDateLabel()}</div>
         <div class="invoice-period">対象期間：${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</div>
-        <div class="invoice-to"><span>${escapeHtml(invoiceCompany)}</span><b>御中</b></div>
+        <div class="invoice-to"><span>${escapeHtml(invoiceCompany)}</span><b>${escapeHtml(companyInvoiceHonorific(selectedCompany))}</b></div>
         <div class="invoice-message">　　下記のとおりご請求申し上げます</div>
         <div class="invoice-sender">
           ${stamp}

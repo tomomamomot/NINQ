@@ -282,12 +282,12 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
   #sc-st.screen.active{max-width:860px;padding-bottom:24px}
   #sc-st .st-section{margin-left:20px;margin-right:20px}
   #sc-st .sec-hd{padding-left:24px;padding-right:24px}
-  #sc-st .company-rate-add{grid-template-columns:minmax(90px,.9fr) minmax(150px,1.25fr) minmax(180px,1.55fr) repeat(3,minmax(78px,.7fr)) minmax(96px,.8fr) 76px;align-items:center}
-  #sc-st .company-rate-add #st-company-new,#sc-st .company-rate-add #st-company-sheet-new,#sc-st .company-rate-add #st-company-official-new,#sc-st .company-rate-add .mini-add-btn{grid-column:auto}
+  #sc-st .company-rate-add{grid-template-columns:minmax(90px,.9fr) minmax(150px,1.25fr) minmax(180px,1.55fr) minmax(70px,.55fr) repeat(3,minmax(78px,.7fr)) minmax(96px,.8fr) 76px;align-items:center}
+  #sc-st .company-rate-add #st-company-new,#sc-st .company-rate-add #st-company-sheet-new,#sc-st .company-rate-add #st-company-official-new,#sc-st .company-rate-add #st-company-honorific-new,#sc-st .company-rate-add .mini-add-btn{grid-column:auto}
   #sc-st .company-rate-add .st-input,#sc-st .company-rate-add .st-select,#sc-st .company-rate-add .mini-add-btn{min-height:44px;padding-top:10px;padding-bottom:10px}
   #sc-st .company-rate-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
   #sc-st .company-rate-card.open{grid-column:1/-1}
-  #sc-st .company-rate-edit{grid-template-columns:minmax(90px,.9fr) minmax(150px,1.25fr) minmax(180px,1.55fr) repeat(3,minmax(78px,.7fr)) minmax(96px,.8fr);align-items:center}
+  #sc-st .company-rate-edit{grid-template-columns:minmax(90px,.9fr) minmax(150px,1.25fr) minmax(180px,1.55fr) minmax(70px,.55fr) repeat(3,minmax(78px,.7fr)) minmax(96px,.8fr);align-items:center}
   #sc-st .company-rate-name-input,#sc-st .company-closing-select{grid-column:auto}
   #sc-st .company-rate-main{font-size:16px}
   #sc-st .company-rate-sub{font-size:12px}
