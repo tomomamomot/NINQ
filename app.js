@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.02-1';
+const APP_VERSION = 'v2026.07.02-2';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
@@ -797,12 +797,12 @@ function ensureExpenseQuickEditModal() {
   modal.innerHTML = `
     <div class="expense-quick-edit" role="dialog" aria-modal="true" aria-labelledby="expense-quick-title">
       <div class="expense-quick-title" id="expense-quick-title">経費を入力</div>
-      <label class="expense-quick-label" for="expense-quick-amount"><span id="expense-quick-name">経費</span></label>
-      <input class="expense-quick-input" id="expense-quick-amount" type="number" min="0" step="1" inputmode="numeric">
       <div class="expense-quick-actions">
         <button class="btn-secondary" type="button" data-expense-quick-cancel>キャンセル</button>
         <button class="btn-primary" type="button" data-expense-quick-save>保存</button>
       </div>
+      <label class="expense-quick-label" for="expense-quick-amount"><span id="expense-quick-name">経費</span></label>
+      <input class="expense-quick-input" id="expense-quick-amount" type="number" min="0" step="1" inputmode="numeric">
     </div>`;
   document.body.appendChild(modal);
   return modal;
