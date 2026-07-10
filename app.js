@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.02-7';
+const APP_VERSION = 'v2026.07.11-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
@@ -17,16 +17,16 @@ const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
   invoiceNo: '', invoiceEnabled: true, taxRate: 10, stampImage: '', invoiceFontSize: '1',
   defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0,
-  companies: [], companyRates: [], expenseItems: DEFAULT_EXPENSE_ITEMS.map((label, index) => ({ id: `exp${index + 1}`, label })),
+  companies: [], companyRates: [], deletedCompanyPresetIds: {}, expenseItems: DEFAULT_EXPENSE_ITEMS.map((label, index) => ({ id: `exp${index + 1}`, label })),
   companyInvoiceModes: {}, showSales: true, showSubcontract: true, uiSize: '1', fontChoice: 'system', googleClientId: '', googleCalendarId: 'primary', googleStoreMode: 'local', googleAccountEmail: '', googleSyncEnabled: false, googleConflictMode: 'newer',
   salesTotalParts: { labor: true, overtime: true, expenses: false }, settingUpdatedAt: {},
 };
-const DEFAULT_STATE = { entries: [], receipts: [], deletedEntryIds: {}, settings: DEFAULT_SETTINGS };
+const DEFAULT_STATE = { entries: [], receipts: [], deletedEntryIds: {}, deletedReceiptIds: {}, settings: DEFAULT_SETTINGS };
 const SETTINGS_SECTIONS = {
   profile: ['name', 'postalCode', 'address', 'tel', 'companyName'],
   bank: ['bank', 'branch', 'accountNo', 'accountName'],
   invoice: ['invoiceNo', 'invoiceEnabled', 'taxRate', 'stampImage', 'companyInvoiceModes', 'invoiceFontSize'],
-  companies: ['companies', 'companyRates'],
+  companies: ['companies', 'companyRates', 'deletedCompanyPresetIds'],
   expenses: ['expenseItems'],
   display: ['showSales', 'showSubcontract', 'salesTotalParts', 'uiSize', 'fontChoice'],
   google: ['googleClientId', 'googleCalendarId', 'googleStoreMode', 'googleAccountEmail', 'googleSyncEnabled', 'googleConflictMode'],
@@ -100,6 +100,7 @@ function normalizeState(source) {
   settings.companies = Array.isArray(settings.companies) ? settings.companies.filter(Boolean) : [];
   settings.expenseItems = normalizeExpenseItems(settings.expenseItems);
   settings.companyInvoiceModes = settings.companyInvoiceModes && typeof settings.companyInvoiceModes === 'object' ? settings.companyInvoiceModes : {};
+  settings.deletedCompanyPresetIds = settings.deletedCompanyPresetIds && typeof settings.deletedCompanyPresetIds === 'object' ? settings.deletedCompanyPresetIds : {};
   settings.salesTotalParts = { ...DEFAULT_SETTINGS.salesTotalParts, ...(settings.salesTotalParts || {}) };
   settings.uiSize = fontSizeLevel(settings.uiSize);
   if (!['system', 'thin', 'meiryo', 'gothic', 'rounded'].includes(settings.fontChoice)) settings.fontChoice = DEFAULT_SETTINGS.fontChoice;
@@ -109,7 +110,8 @@ function normalizeState(source) {
   const entries = Array.isArray(source.entries) ? source.entries.map(normalizeEntry) : [];
   const receipts = Array.isArray(source.receipts) ? source.receipts.map(normalizeReceipt) : [];
   const deletedEntryIds = source.deletedEntryIds && typeof source.deletedEntryIds === 'object' ? source.deletedEntryIds : {};
-  return { entries, receipts, deletedEntryIds, settings };
+  const deletedReceiptIds = source.deletedReceiptIds && typeof source.deletedReceiptIds === 'object' ? source.deletedReceiptIds : {};
+  return { entries, receipts, deletedEntryIds, deletedReceiptIds, settings };
 }
 function normalizeExpenseItems(items) {
   const list = Array.isArray(items) ? items : [];
@@ -144,11 +146,11 @@ function normalizeInvoiceHonorific(value) {
 function normalizeCompanyRates(items, companies = []) {
   const source = Array.isArray(items) ? items : [];
   const mapped = source.map((item) => {
-    if (typeof item === 'string') return { id: crypto.randomUUID(), name: item, sheetName: companySheetNameFromOfficial(item), officialName: item, invoiceHonorific: '御中', dayRate: 0, nightRate: 0, otRate: 0, closingDay: 0 };
+    if (typeof item === 'string') return { id: crypto.randomUUID(), name: item, sheetName: companySheetNameFromOfficial(item), officialName: item, invoiceHonorific: '御中', dayRate: 0, nightRate: 0, otRate: 0, closingDay: 0, updatedAt: '' };
     const name = String(item.name || item.company || '').trim();
     const officialName = String(item.officialName || item.formalName || name).trim();
     const sheetName = String(item.sheetName || item.displayName || companySheetNameFromOfficial(officialName || name)).trim();
-    return { id: String(item.id || crypto.randomUUID()), name, sheetName: sheetName || name, officialName, invoiceHonorific: normalizeInvoiceHonorific(item.invoiceHonorific || item.honorific), dayRate: num(item.dayRate), nightRate: num(item.nightRate), otRate: num(item.otRate), closingDay: closingDayValue(item.closingDay) };
+    return { id: String(item.id || crypto.randomUUID()), name, sheetName: sheetName || name, officialName, invoiceHonorific: normalizeInvoiceHonorific(item.invoiceHonorific || item.honorific), dayRate: num(item.dayRate), nightRate: num(item.nightRate), otRate: num(item.otRate), closingDay: closingDayValue(item.closingDay), updatedAt: item.updatedAt || '' };
   }).filter((item) => item.name);
   const deduped = [];
   mapped.forEach((item) => {
@@ -157,15 +159,16 @@ function normalizeCompanyRates(items, companies = []) {
       existing.officialName = item.officialName || existing.officialName || item.name;
       existing.sheetName = item.sheetName || existing.sheetName || companySheetNameFromOfficial(existing.officialName || item.name);
       existing.invoiceHonorific = item.invoiceHonorific || existing.invoiceHonorific || '御中';
-      existing.dayRate = item.dayRate || existing.dayRate;
-      existing.nightRate = item.nightRate || existing.nightRate;
-      existing.otRate = item.otRate || existing.otRate;
+      existing.dayRate = item.dayRate;
+      existing.nightRate = item.nightRate;
+      existing.otRate = item.otRate;
       existing.closingDay = closingDayValue(item.closingDay);
+      existing.updatedAt = newerByDate(existing, item, ['updatedAt']).updatedAt || existing.updatedAt || item.updatedAt || '';
     } else {
       deduped.push(item);
     }
   });
-  companies.filter(Boolean).forEach((name) => { if (!deduped.some((item) => item.name === name)) deduped.push({ id: crypto.randomUUID(), name, sheetName: companySheetNameFromOfficial(name), officialName: name, invoiceHonorific: '御中', dayRate: 0, nightRate: 0, otRate: 0, closingDay: 0 }); });
+  companies.filter(Boolean).forEach((name) => { if (!deduped.some((item) => item.name === name)) deduped.push({ id: crypto.randomUUID(), name, sheetName: companySheetNameFromOfficial(name), officialName: name, invoiceHonorific: '御中', dayRate: 0, nightRate: 0, otRate: 0, closingDay: 0, updatedAt: '' }); });
   return deduped;
 }
 function normalizeReceipt(receipt) {
@@ -173,14 +176,20 @@ function normalizeReceipt(receipt) {
     id: String(receipt.id || crypto.randomUUID()), fileName: receipt.fileName || '領収書', importedAt: receipt.importedAt || new Date().toISOString(),
     category: receipt.category || guessReceiptCategory(`${receipt.fileName || ''} ${receipt.ocrText || ''}`),
     amount: num(receipt.amount || 0), date: receipt.date || '', vendor: receipt.vendor || '',
-    ocrText: receipt.ocrText || '', imageData: receipt.imageData || '', status: receipt.status || '未確認', updatedAt: receipt.updatedAt || receipt.importedAt || new Date().toISOString()
+    ocrText: receipt.ocrText || '', imageData: receipt.imageData || '', status: receipt.status || '未確認',
+    targetEntryId: receipt.targetEntryId || receipt.appliedEntryId || '', appliedEntryId: receipt.appliedEntryId || '',
+    appliedExpenseId: receipt.appliedExpenseId || '', appliedAmount: num(receipt.appliedAmount || 0),
+    updatedAt: receipt.updatedAt || receipt.importedAt || new Date().toISOString()
   };
 }
 function normalizeEntry(entry) {
+  const paymentAmountSet = entry.paymentAmountSet !== undefined
+    ? !!entry.paymentAmountSet
+    : num(entry.paymentAmount) > 0;
   return {
     id: String(entry.id || crypto.randomUUID()), date: entry.date || toYmd(new Date()), type: entry.type || 'self', shift: entry.shift || 'day',
     company: entry.company || '', site: entry.site || '', workerName: entry.workerName || '', qty: qtyValue(entry.qty),
-    unitRate: num(entry.unitRate || 0), paymentAmount: num(entry.paymentAmount || 0), otHours: num(entry.otHours || 0), otRate: num(entry.otRate || 0),
+    unitRate: num(entry.unitRate || 0), paymentAmount: num(entry.paymentAmount || 0), paymentAmountSet, otHours: num(entry.otHours || 0), otRate: num(entry.otRate || 0),
     expenses: entry.expenses && typeof entry.expenses === 'object' ? entry.expenses : {}, notes: entry.notes || '',
     invoiceMode: entry.invoiceMode || 'with', rangeGroupId: entry.rangeGroupId || '', rangeStart: entry.rangeStart || '', rangeEnd: entry.rangeEnd || '',
     excludedDates: Array.isArray(entry.excludedDates) ? entry.excludedDates.filter(Boolean) : [],
@@ -210,7 +219,30 @@ function migrateLegacy(oldData) {
   saveState(migrated);
   return migrated;
 }
-function saveState(nextState = state) { localStorage.setItem(STORE_KEY, JSON.stringify(nextState)); }
+function saveState(nextState = state) {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(nextState));
+  } catch (error) {
+    if (error?.name !== 'QuotaExceededError') throw error;
+    const compacted = clone(nextState);
+    const withImages = (compacted.receipts || [])
+      .filter((receipt) => receipt.imageData)
+      .sort((a, b) => String(a.importedAt || '').localeCompare(String(b.importedAt || '')));
+    let saved = false;
+    while (withImages.length && !saved) {
+      withImages.shift().imageData = '';
+      try {
+        localStorage.setItem(STORE_KEY, JSON.stringify(compacted));
+        saved = true;
+      } catch (retryError) {
+        if (retryError?.name !== 'QuotaExceededError') throw retryError;
+      }
+    }
+    if (!saved) throw error;
+    if (nextState === state) state.receipts = compacted.receipts;
+    window.setTimeout(() => showSaveFeedback('保存容量を確保するため古い領収書写真を整理しました'), 0);
+  }
+}
 function loadSyncMeta() {
   try {
     return { lastCloudModifiedAt: '', lastLocalModifiedAt: '', lastSyncedAt: '', ...(JSON.parse(localStorage.getItem(SYNC_META_KEY) || '{}')) };
@@ -371,6 +403,7 @@ function subcontractEnabled() { return state.settings.showSubcontract !== false;
 function yearEntries() { const year = cursor.getFullYear(); return state.entries.filter((entry) => fromYmd(entry.date).getFullYear() === year); }
 function sumBy(entries, selector) { return entries.reduce((sum, entry) => sum + selector(entry), 0); }
 function rateFieldValue(value) { return num(value) ? String(num(value)) : ''; }
+function optionalMoneyFieldValue(value, isSet) { return isSet ? String(num(value)) : ''; }
 function settingListValues(hiddenId) { return (document.getElementById(hiddenId)?.value || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean); }
 function writeSettingList(hiddenId, values) { const hidden = document.getElementById(hiddenId); if (hidden) hidden.value = values.join('\n'); }
 function renderEditableList(listId, hiddenId) {
@@ -460,37 +493,57 @@ function markSettingsSections(sections) {
 function settingsSectionTime(settings, section) {
   return Date.parse(settings?.settingUpdatedAt?.[section] || settings?.updatedAt || '') || 0;
 }
+function mergeTimestampMaps(...maps) {
+  const merged = {};
+  maps.forEach((map) => Object.entries(map || {}).forEach(([id, value]) => {
+    if (!merged[id] || dateTime(value) > dateTime(merged[id])) merged[id] = value;
+  }));
+  return merged;
+}
 function mergeCompanyPresetLists(localSettings, remoteSettings) {
   const localTime = settingsSectionTime(localSettings, 'companies');
   const remoteTime = settingsSectionTime(remoteSettings, 'companies');
-  const byName = new Map();
+  const deleted = mergeTimestampMaps(localSettings.deletedCompanyPresetIds, remoteSettings.deletedCompanyPresetIds);
+  const merged = [];
   const mergeItem = (preset, sourceTime) => {
-    const key = String(preset.name || '').trim().toLowerCase();
-    if (!key) return;
-    const existing = byName.get(key);
+    const nameKey = String(preset.name || '').trim().toLowerCase();
+    if (!nameKey) return;
+    const existingIndex = merged.findIndex((saved) => saved.id === preset.id || String(saved.name || '').trim().toLowerCase() === nameKey);
+    const itemTime = dateTime(preset.updatedAt) || sourceTime;
+    const deletedAt = Math.max(dateTime(deleted[preset.id]), dateTime(deleted[`name:${nameKey}`]));
+    if (deletedAt && deletedAt >= itemTime) return;
+    const existing = existingIndex >= 0 ? merged[existingIndex] : null;
     if (!existing) {
-      byName.set(key, { ...preset, _time: sourceTime });
+      merged.push({ ...preset, _time: itemTime });
       return;
     }
-    const incomingIsNewer = sourceTime >= existing._time;
+    const incomingIsNewer = itemTime >= existing._time;
     const preferred = incomingIsNewer ? preset : existing;
     const fallback = incomingIsNewer ? existing : preset;
-    byName.set(key, {
+    merged[existingIndex] = {
       id: existing.id || preset.id || crypto.randomUUID(),
       name: preferred.name || fallback.name,
       officialName: preferred.officialName || fallback.officialName || preferred.name || fallback.name,
       sheetName: preferred.sheetName || fallback.sheetName || companySheetNameFromOfficial(preferred.officialName || fallback.officialName || preferred.name || fallback.name),
       invoiceHonorific: normalizeInvoiceHonorific(preferred.invoiceHonorific || fallback.invoiceHonorific),
-      dayRate: num(preferred.dayRate) || num(fallback.dayRate),
-      nightRate: num(preferred.nightRate) || num(fallback.nightRate),
-      otRate: num(preferred.otRate) || num(fallback.otRate),
+      dayRate: num(preferred.dayRate),
+      nightRate: num(preferred.nightRate),
+      otRate: num(preferred.otRate),
       closingDay: closingDayValue(preferred.closingDay),
-      _time: Math.max(existing._time || 0, sourceTime || 0),
-    });
+      updatedAt: preferred.updatedAt || fallback.updatedAt || '',
+      _time: Math.max(existing._time || 0, itemTime || 0),
+    };
   };
   normalizeCompanyRates(localSettings.companyRates, localSettings.companies).forEach((preset) => mergeItem(preset, localTime));
   normalizeCompanyRates(remoteSettings.companyRates, remoteSettings.companies).forEach((preset) => mergeItem(preset, remoteTime));
-  return [...byName.values()].map(({ _time, ...preset }) => preset).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+  return merged
+    .filter((preset) => {
+      const nameKey = String(preset.name || '').trim().toLowerCase();
+      const deletedAt = Math.max(dateTime(deleted[preset.id]), dateTime(deleted[`name:${nameKey}`]));
+      return !deletedAt || dateTime(preset.updatedAt) > deletedAt;
+    })
+    .map(({ _time, ...preset }) => preset)
+    .sort((a, b) => a.name.localeCompare(b.name, 'ja'));
 }
 function mergeSettingsBySection(localSettings, remoteSettings) {
   const local = normalizeState({ settings: localSettings }).settings;
@@ -501,6 +554,7 @@ function mergeSettingsBySection(localSettings, remoteSettings) {
       const companyRates = mergeCompanyPresetLists(local, remote);
       merged.companyRates = companyRates;
       merged.companies = companyRates.map((item) => item.name);
+      merged.deletedCompanyPresetIds = mergeTimestampMaps(local.deletedCompanyPresetIds, remote.deletedCompanyPresetIds);
       return;
     }
     const source = settingsSectionTime(remote, section) > settingsSectionTime(local, section) ? remote : local;
@@ -537,6 +591,11 @@ function updateCompanyPresetField(id, field, value) {
   } else {
     item[field] = num(value);
   }
+  item.updatedAt = new Date().toISOString();
+  if (state.settings.deletedCompanyPresetIds) {
+    delete state.settings.deletedCompanyPresetIds[item.id];
+    delete state.settings.deletedCompanyPresetIds[`name:${String(item.name || '').trim().toLowerCase()}`];
+  }
   writeCompanyPresetValues(values);
   scheduleSettingsAutosave({ section: 'companies' });
 }
@@ -566,12 +625,17 @@ function renderSettingListEditors() { ensureCompanySheetNameInput(); renderCompa
 function addCompanyPreset() {
   const nameInput = document.getElementById('st-company-new'); if (!nameInput) return;
   const name = nameInput.value.trim(); if (!name) return;
-  const next = companyPresetValues().filter((item) => item.name !== name);
-  const id = crypto.randomUUID();
+  const current = companyPresetValues();
+  const existing = current.find((item) => item.name === name);
+  const next = current.filter((item) => item.id !== existing?.id);
+  const id = existing?.id || crypto.randomUUID();
   const officialName = document.getElementById('st-company-official-new')?.value.trim() || name;
   const sheetName = document.getElementById('st-company-sheet-new')?.value.trim() || companySheetNameFromOfficial(officialName);
   const invoiceHonorific = normalizeInvoiceHonorific(document.getElementById('st-company-honorific-new')?.value);
-  next.push({ id, name, sheetName, officialName, invoiceHonorific, dayRate: num(document.getElementById('st-company-day-new')?.value), nightRate: num(document.getElementById('st-company-night-new')?.value), otRate: num(document.getElementById('st-company-ot-new')?.value), closingDay: closingDayValue(document.getElementById('st-company-closing-new')?.value) });
+  next.push({ id, name, sheetName, officialName, invoiceHonorific, dayRate: num(document.getElementById('st-company-day-new')?.value), nightRate: num(document.getElementById('st-company-night-new')?.value), otRate: num(document.getElementById('st-company-ot-new')?.value), closingDay: closingDayValue(document.getElementById('st-company-closing-new')?.value), updatedAt: new Date().toISOString() });
+  state.settings.deletedCompanyPresetIds = { ...(state.settings.deletedCompanyPresetIds || {}) };
+  delete state.settings.deletedCompanyPresetIds[id];
+  delete state.settings.deletedCompanyPresetIds[`name:${name.toLowerCase()}`];
   writeCompanyPresetValues(next);
   openCompanyPresetId = id;
   ['st-company-new', 'st-company-sheet-new', 'st-company-official-new', 'st-company-day-new', 'st-company-night-new', 'st-company-ot-new'].forEach((id) => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -611,7 +675,7 @@ function calcEntry(entry) {
   const subtotal = labor + overtime + expenses;
   const subcontractSales = labor + overtime;
   const paymentAmount = entry.type === 'sub' ? num(entry.paymentAmount) : 0;
-  const subcontractPay = entry.type === 'sub' ? (paymentAmount || subcontractSales) : 0;
+  const subcontractPay = entry.type === 'sub' ? (entry.paymentAmountSet ? paymentAmount : subcontractSales) : 0;
   const subcontractDiff = entry.type === 'sub' ? subcontractSales - subcontractPay : 0;
   return { qty, unitRate, otHours, otRate, labor, overtime, expenses, subtotal, subcontractSales, paymentAmount, subcontractPay, subcontractDiff };
 }
@@ -1265,6 +1329,18 @@ function renderExpenseRows(title, rows) {
   if (!rows.length) return `<div class="expense-group"><div class="expense-group-title">${escapeHtml(title)}</div><div class="expense-empty">経費入力なし</div></div>`;
   return `<div class="expense-group"><div class="expense-group-title">${escapeHtml(title)}</div>${rows.map((row) => `<div class="expense-row"><span>${escapeHtml(row.label)}</span><strong>${yen(row.total, !state.settings.showSales)}</strong></div>`).join('')}</div>`;
 }
+function receiptTargetOptions(receipt) {
+  const entries = receipt.date ? sortEntriesForCalendarDisplay(dayEntries(receipt.date)) : [];
+  if (!entries.length) return '<option value="">同じ日付の予定なし</option>';
+  const selectedId = entries.some((entry) => entry.id === receipt.targetEntryId)
+    ? receipt.targetEntryId
+    : (entries.some((entry) => entry.id === receipt.appliedEntryId) ? receipt.appliedEntryId : entries[0].id);
+  return entries.map((entry) => {
+    const worker = entry.type === 'sub' ? ` / ${entry.workerName || '外注'}` : '';
+    const label = `${shiftLabel(entry.shift)} / ${entry.company || '会社未入力'} / ${entry.site || '現場未入力'}${worker}`;
+    return `<option value="${escapeHtml(entry.id)}" ${entry.id === selectedId ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+  }).join('');
+}
 function receiptCardHtml(receipt) {
   const thumbnail = receipt.imageData ? `<img class="receipt-thumb" src="${receipt.imageData}" alt="領収書写真">` : '<div class="receipt-thumb empty">写真なし</div>';
   const ocrText = receipt.ocrText ? `<details class="receipt-ocr"><summary>OCR文字</summary><pre>${escapeHtml(receipt.ocrText.slice(0, 900))}</pre></details>` : '';
@@ -1280,10 +1356,11 @@ function receiptCardHtml(receipt) {
       <input class="receipt-date" type="date" data-receipt-date="${receipt.id}" value="${escapeHtml(receipt.date || '')}">
       <input class="receipt-amount" type="number" inputmode="numeric" min="0" step="1" data-receipt-amount="${receipt.id}" value="${num(receipt.amount) || ''}" placeholder="金額">
     </div>
-    <select class="receipt-select" data-receipt-category="${receipt.id}">${expenseItems().map((item) => `<option value="${escapeHtml(item.label)}" ${item.label === receipt.category ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select>
+    <select class="receipt-select" data-receipt-category="${receipt.id}" aria-label="経費項目">${expenseItems().map((item) => `<option value="${escapeHtml(item.label)}" ${item.label === receipt.category ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select>
+    <select class="receipt-select" data-receipt-entry="${receipt.id}" aria-label="入力先の予定">${receiptTargetOptions(receipt)}</select>
     ${ocrText}
     <div class="receipt-actions">
-      <button class="btn-secondary receipt-apply" type="button" data-apply-receipt="${receipt.id}">予定へ入力</button>
+      <button class="btn-secondary receipt-apply" type="button" data-apply-receipt="${receipt.id}">${receipt.appliedEntryId ? '入力内容を更新' : '予定へ入力'}</button>
       <button class="btn-secondary receipt-retry" type="button" data-ocr-retry="${receipt.id}">再読み取り</button>
     </div>
     <button class="receipt-del" type="button" data-del-receipt="${receipt.id}">×</button>
@@ -1408,7 +1485,7 @@ function renderSettings() {
   renderSettingListEditors();
 }
 function createDefaultEntry(type, date) {
-  return { id: '', date, type, shift: 'day', company: '', site: '', workerName: '', qty: 1, unitRate: '', paymentAmount: '', otHours: 0, otRate: '', expenses: Object.fromEntries(expenseItems().map((item) => [item.id, 0])), notes: '', invoiceMode: 'with' };
+  return { id: '', date, type, shift: 'day', company: '', site: '', workerName: '', qty: 1, unitRate: '', paymentAmount: '', paymentAmountSet: false, otHours: 0, otRate: '', expenses: Object.fromEntries(expenseItems().map((item) => [item.id, 0])), notes: '', invoiceMode: 'with' };
 }
 function renderRangeExclusions(selectedDates = null) {
   const wrap = document.getElementById('range-exclude-wrap');
@@ -1501,8 +1578,10 @@ function updateSubcontractDiff() {
   wrap.classList.toggle('hidden', !isSub);
   if (!isSub) return;
   const subtotal = currentFormSubtotal();
-  const payment = num(document.getElementById('f-payment-amount')?.value);
-  const diff = subtotal - (payment || subtotal);
+  const paymentInput = document.getElementById('f-payment-amount');
+  const paymentIsSet = paymentInput && paymentInput.value.trim() !== '';
+  const payment = num(paymentInput?.value);
+  const diff = subtotal - (paymentIsSet ? payment : subtotal);
   const salesEl = document.getElementById('sub-sales-preview');
   const diffEl = document.getElementById('sub-diff-preview');
   if (salesEl) salesEl.textContent = yen(subtotal);
@@ -1537,7 +1616,7 @@ function openModal(type, id = null) {
       <div class="field-r2"><div class="field"><label>勤務区分</label><select id="f-shift"><option value="day" ${entry.shift === 'day' ? 'selected' : ''}>日勤</option><option value="night" ${entry.shift === 'night' ? 'selected' : ''}>夜勤</option><option value="trip" ${entry.shift === 'trip' ? 'selected' : ''}>出張</option></select></div><div class="field"><label>人工</label><input id="f-qty" type="number" min="0" step="0.5" value="${entry.qty}"></div></div>
       <div class="field-r3"><div class="field"><label>単価</label><input id="f-rate" type="number" min="0" step="1" value="${rateFieldValue(entry.unitRate)}"></div><div class="field"><label>残業時間</label><input id="f-ot-hours" type="number" min="0" step="0.5" value="${num(entry.otHours) || ''}"></div><div class="field"><label>残業単価</label><input id="f-ot-rate" type="number" min="0" step="1" value="${rateFieldValue(entry.otRate)}"></div></div>
       <div class="${isSub ? '' : 'hidden'}" id="sub-pay-wrap">
-        <div class="field-r2"><div class="field"><label>支払金額</label><input id="f-payment-amount" type="number" min="0" step="1" value="${rateFieldValue(entry.paymentAmount)}" placeholder="実際に払う金額"></div><div class="field"><label>差額</label><input id="sub-diff-preview" readonly value=""></div></div>
+        <div class="field-r2"><div class="field"><label>支払金額</label><input id="f-payment-amount" type="number" min="0" step="1" value="${optionalMoneyFieldValue(entry.paymentAmount, entry.paymentAmountSet)}" placeholder="実際に払う金額"></div><div class="field"><label>差額</label><input id="sub-diff-preview" readonly value=""></div></div>
         <div class="sub-pay-note">売上計算 <strong id="sub-sales-preview">¥0</strong> との差額を表示します</div>
       </div>
       <div class="sec-hd" style="padding:0 0 8px">経費</div><div class="field-r2">${expenseFields}</div>
@@ -1559,8 +1638,8 @@ function applyCompanyRate(name) {
   const rate = rateForPresetShift(preset, shift);
   const rateInput = document.getElementById('f-rate');
   const otRateInput = document.getElementById('f-ot-rate');
-  if (rateInput && num(rate)) rateInput.value = rateFieldValue(rate);
-  if (otRateInput && num(preset.otRate)) otRateInput.value = rateFieldValue(preset.otRate);
+  if (rateInput) rateInput.value = rateFieldValue(rate);
+  if (otRateInput) otRateInput.value = rateFieldValue(preset.otRate);
 }
 function collectEntryForm() {
   const type = document.querySelector('[data-entry-type].active')?.dataset.entryType || 'self';
@@ -1572,10 +1651,12 @@ function collectEntryForm() {
   const originalRange = original ? entryRangeGroup(original) : null;
   const originalByDate = new Map((originalRange?.entries || []).map((entry) => [entry.date, entry]));
   const createdAt = original?.createdAt || new Date().toISOString();
+  const paymentInput = document.getElementById('f-payment-amount');
+  const paymentAmountSet = type === 'sub' && !!paymentInput && paymentInput.value.trim() !== '';
   const base = {
     type, shift: document.getElementById('f-shift').value,
     company: normalizeCompanyInputName(document.getElementById('f-company').value), site: document.getElementById('f-site').value.trim(), workerName: document.getElementById('f-worker').value.trim(),
-    qty: num(document.getElementById('f-qty').value), unitRate: num(document.getElementById('f-rate').value), paymentAmount: type === 'sub' ? num(document.getElementById('f-payment-amount')?.value) : 0, otHours: num(document.getElementById('f-ot-hours').value), otRate: num(document.getElementById('f-ot-rate').value),
+    qty: num(document.getElementById('f-qty').value), unitRate: num(document.getElementById('f-rate').value), paymentAmount: type === 'sub' ? num(paymentInput?.value) : 0, paymentAmountSet, otHours: num(document.getElementById('f-ot-hours').value), otRate: num(document.getElementById('f-ot-rate').value),
     expenses: {}, notes: document.getElementById('f-notes').value.trim(), invoiceMode: 'with', createdAt, updatedAt: new Date().toISOString()
   };
   document.querySelectorAll('[data-expense-id]').forEach((input) => { base.expenses[input.dataset.expenseId] = num(input.value); });
@@ -1998,25 +2079,30 @@ function mergeById(localItems = [], remoteItems = [], dateKeys = ['updatedAt', '
   return [...map.values()];
 }
 function mergeDeletedEntryIds(localDeleted = {}, remoteDeleted = {}) {
-  return { ...(remoteDeleted || {}), ...(localDeleted || {}) };
+  return mergeTimestampMaps(localDeleted, remoteDeleted);
 }
 function mergeEntriesWithDeletes(localEntries = [], remoteEntries = [], localDeleted = {}, remoteDeleted = {}) {
+  return mergeItemsWithDeletes(localEntries, remoteEntries, localDeleted, remoteDeleted, ['updatedAt', 'createdAt']);
+}
+function mergeItemsWithDeletes(localItems = [], remoteItems = [], localDeleted = {}, remoteDeleted = {}, dateKeys = ['updatedAt', 'createdAt']) {
   const deleted = mergeDeletedEntryIds(localDeleted, remoteDeleted);
-  const merged = mergeById(localEntries, remoteEntries);
-  return merged.filter((entry) => {
-    const deletedAt = Date.parse(deleted[entry.id] || '') || 0;
-    const entryAt = Math.max(Date.parse(entry.updatedAt || '') || 0, Date.parse(entry.createdAt || '') || 0);
-    return !deletedAt || entryAt > deletedAt;
+  const merged = mergeById(localItems, remoteItems, dateKeys);
+  return merged.filter((item) => {
+    const deletedAt = Date.parse(deleted[item.id] || '') || 0;
+    const itemAt = Math.max(...dateKeys.map((key) => Date.parse(item[key] || '') || 0));
+    return !deletedAt || itemAt > deletedAt;
   });
 }
 function mergeDriveState(remotePayload) {
   const remoteState = normalizeState(remotePayload.state || remotePayload);
   const deletedEntryIds = mergeDeletedEntryIds(state.deletedEntryIds, remoteState.deletedEntryIds);
+  const deletedReceiptIds = mergeDeletedEntryIds(state.deletedReceiptIds, remoteState.deletedReceiptIds);
   return normalizeState({
     settings: mergeSettingsBySection(state.settings, remoteState.settings),
     entries: mergeEntriesWithDeletes(state.entries, remoteState.entries, state.deletedEntryIds, remoteState.deletedEntryIds),
-    receipts: mergeById(state.receipts || [], remoteState.receipts || [], ['updatedAt', 'importedAt']),
+    receipts: mergeItemsWithDeletes(state.receipts || [], remoteState.receipts || [], state.deletedReceiptIds, remoteState.deletedReceiptIds, ['updatedAt', 'importedAt']),
     deletedEntryIds,
+    deletedReceiptIds,
   });
 }
 function applyRemoteDriveState(remotePayload) {
@@ -2534,9 +2620,8 @@ function loadImageElement(source) {
     img.src = url;
   });
 }
-async function createReceiptImageData(file) {
+async function createCompressedImageData(file, maxWidth = 900, quality = 0.62) {
   const img = await loadImageElement(file);
-  const maxWidth = 1200;
   const scale = Math.min(1, maxWidth / img.width);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(img.width * scale));
@@ -2545,7 +2630,10 @@ async function createReceiptImageData(file) {
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', 0.78);
+  return canvas.toDataURL('image/jpeg', quality);
+}
+async function createReceiptImageData(file) {
+  return createCompressedImageData(file, 900, 0.62);
 }
 async function preprocessReceiptImage(source) {
   const img = await loadImageElement(source);
@@ -2641,27 +2729,61 @@ function retryReceiptOcr(id) {
 function updateReceiptField(id, patch) {
   const item = (state.receipts || []).find((receipt) => receipt.id === id);
   if (!item) return;
+  if (patch.date !== undefined && patch.date !== item.date) patch.targetEntryId = '';
   Object.assign(item, patch, { status: patch.status || item.status, updatedAt: new Date().toISOString() });
+  if (state.deletedReceiptIds) delete state.deletedReceiptIds[id];
   saveState();
+  scheduleDriveAutoSync({ delay: 1800 });
+}
+function removeReceiptApplication(receipt) {
+  if (!receipt?.appliedEntryId) return;
+  const entry = state.entries.find((item) => item.id === receipt.appliedEntryId);
+  if (!entry) return;
+  const fallbackExpense = expenseItems().find((item) => item.label === receipt.category);
+  const expenseId = receipt.appliedExpenseId || fallbackExpense?.id;
+  const amount = receipt.appliedAmount || num(receipt.amount);
+  if (!expenseId || !amount) return;
+  entry.expenses = { ...(entry.expenses || {}) };
+  entry.expenses[expenseId] = Math.max(0, num(entry.expenses[expenseId]) - amount);
+  entry.updatedAt = new Date().toISOString();
 }
 function applyReceiptToEntry(id) {
   const receipt = (state.receipts || []).find((item) => item.id === id);
   if (!receipt) return;
   if (!receipt.date) { alert('領収書の日付を入れてください'); return; }
   if (!num(receipt.amount)) { alert('領収書の金額を入れてください'); return; }
-  const entry = dayEntries(receipt.date)[0];
+  const candidates = sortEntriesForCalendarDisplay(dayEntries(receipt.date));
+  const entry = candidates.find((item) => item.id === receipt.targetEntryId)
+    || candidates.find((item) => item.id === receipt.appliedEntryId)
+    || candidates[0];
   if (!entry) { alert('同じ日付の予定がありません'); return; }
   const expense = expenseItems().find((item) => item.label === receipt.category) || expenseItems()[0];
   if (!expense) return;
+  removeReceiptApplication(receipt);
   entry.expenses = { ...(entry.expenses || {}) };
   entry.expenses[expense.id] = num(entry.expenses[expense.id]) + num(receipt.amount);
   entry.updatedAt = new Date().toISOString();
   receipt.status = '予定へ入力済み';
+  receipt.targetEntryId = entry.id;
   receipt.appliedEntryId = entry.id;
+  receipt.appliedExpenseId = expense.id;
+  receipt.appliedAmount = num(receipt.amount);
+  receipt.updatedAt = new Date().toISOString();
   saveState();
   renderAll();
   scheduleDriveAutoSync();
   showSaveFeedback('領収書を予定へ入力しました');
+}
+function deleteReceipt(id) {
+  const receipt = (state.receipts || []).find((item) => item.id === id);
+  if (!receipt || !confirm('この領収書を削除しますか？')) return;
+  removeReceiptApplication(receipt);
+  const now = new Date().toISOString();
+  state.receipts = (state.receipts || []).filter((item) => item.id !== id);
+  state.deletedReceiptIds = { ...(state.deletedReceiptIds || {}), [id]: now };
+  saveState();
+  renderAll();
+  scheduleDriveAutoSync({ message: '領収書の削除をクラウドへ保存します...' });
 }
 function handleReceiptFiles(files) {
   const list = Array.from(files || []);
@@ -2716,18 +2838,18 @@ function flushSettingsAutosave() {
   settingsAutosaveTimer = null;
   persistSettingsFromForm({ render: false, sections: targetSections });
 }
-function handleStampFile(file) {
+async function handleStampFile(file) {
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    state.settings.stampImage = String(reader.result || '');
+  try {
+    state.settings.stampImage = await createCompressedImageData(file, 480, 0.72);
     markSettingsSections('invoice');
     saveState();
     renderAll();
     scheduleDriveAutoSync({ message: '印鑑設定をクラウドへ保存します...' });
     showSaveFeedback('印鑑を登録しました');
-  };
-  reader.readAsDataURL(file);
+  } catch (error) {
+    alert(error.message || '印鑑画像を読み込めませんでした');
+  }
 }
 function clearStampImage() {
   state.settings.stampImage = '';
@@ -2920,7 +3042,24 @@ function bindEvents() {
     const toggleCompanyPreset = event.target.closest('[data-toggle-company-preset]');
     if (toggleCompanyPreset) { openCompanyPresetId = openCompanyPresetId === toggleCompanyPreset.dataset.toggleCompanyPreset ? '' : toggleCompanyPreset.dataset.toggleCompanyPreset; renderCompanyPresetList(); return; }
     const removeCompanyPreset = event.target.closest('[data-remove-company-preset]');
-    if (removeCompanyPreset) { const values = companyPresetValues().filter((_, index) => index !== Number(removeCompanyPreset.dataset.removeCompanyPreset)); openCompanyPresetId = ''; writeCompanyPresetValues(values); renderCompanyPresetList(); scheduleSettingsAutosave({ immediate: true, section: 'companies' }); return; }
+    if (removeCompanyPreset) {
+      const index = Number(removeCompanyPreset.dataset.removeCompanyPreset);
+      const current = companyPresetValues();
+      const removed = current[index];
+      if (!removed || !confirm(`${removed.name} を登録会社から削除しますか？`)) return;
+      const deletedAt = new Date().toISOString();
+      state.settings.deletedCompanyPresetIds = {
+        ...(state.settings.deletedCompanyPresetIds || {}),
+        [removed.id]: deletedAt,
+        [`name:${String(removed.name || '').trim().toLowerCase()}`]: deletedAt,
+      };
+      const values = current.filter((_, itemIndex) => itemIndex !== index);
+      openCompanyPresetId = '';
+      writeCompanyPresetValues(values);
+      renderCompanyPresetList();
+      scheduleSettingsAutosave({ immediate: true, section: 'companies' });
+      return;
+    }
     const removeSettingItem = event.target.closest('[data-remove-setting-item]');
     if (removeSettingItem) { const hiddenId = removeSettingItem.dataset.removeSettingItem; const index = Number(removeSettingItem.dataset.removeIndex); const values = settingListValues(hiddenId).filter((_, itemIndex) => itemIndex !== index); writeSettingList(hiddenId, values); renderSettingListEditors(); scheduleSettingsAutosave({ immediate: true, section: 'expenses' }); return; }
     const closeDayButton = event.target.closest('[data-close-day-modal]');
@@ -2950,7 +3089,7 @@ function bindEvents() {
     const retryReceipt = event.target.closest('[data-ocr-retry]');
     if (retryReceipt) { retryReceiptOcr(retryReceipt.dataset.ocrRetry); return; }
     const delReceipt = event.target.closest('[data-del-receipt]');
-    if (delReceipt) { state.receipts = (state.receipts || []).filter((receipt) => receipt.id !== delReceipt.dataset.delReceipt); saveState(); renderAll(); scheduleDriveAutoSync({ message: '領収書をクラウドへ保存します...' }); return; }
+    if (delReceipt) { deleteReceipt(delReceipt.dataset.delReceipt); return; }
     const companyChip = event.target.closest('[data-company]'); if (companyChip) { selectedCompany = companyChip.dataset.company; renderInvoiceScreen(); return; }
     if (event.target.matches('#cancel-entry-btn')) { closeModal(); return; }
     if (event.target.matches('[data-export-demen]')) exportDemenCsv();
@@ -3058,7 +3197,8 @@ function bindEvents() {
     if (event.target.matches('[data-range-exclude]')) { event.target.closest('.range-exclude-chip')?.classList.toggle('checked', event.target.checked); return; }
     if (event.target.id === 'f-company-select') { const input = document.getElementById('f-company'); if (input && event.target.value) { input.value = event.target.value; applyCompanyRate(event.target.value); updateSubcontractDiff(); } return; }
     if (event.target.matches('[data-receipt-category]')) { updateReceiptField(event.target.dataset.receiptCategory, { category: event.target.value, status: '確認済み' }); renderAll(); return; }
-    if (event.target.matches('[data-receipt-date]')) { updateReceiptField(event.target.dataset.receiptDate, { date: event.target.value, status: '確認済み' }); return; }
+    if (event.target.matches('[data-receipt-entry]')) { updateReceiptField(event.target.dataset.receiptEntry, { targetEntryId: event.target.value, status: '確認済み' }); return; }
+    if (event.target.matches('[data-receipt-date]')) { updateReceiptField(event.target.dataset.receiptDate, { date: event.target.value, status: '確認済み' }); renderAll(); return; }
     if (event.target.matches('[data-receipt-amount]')) { updateReceiptField(event.target.dataset.receiptAmount, { amount: num(event.target.value), status: '確認済み' }); return; }
     if (event.target.id === 'f-company') {
       const select = document.getElementById('f-company-select'); if (select) select.value = companyOptions().includes(event.target.value.trim()) ? event.target.value.trim() : '';
