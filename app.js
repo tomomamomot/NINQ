@@ -4,8 +4,9 @@ const SYNC_META_KEY = 'ninq-sync-meta-v1';
 const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.13-1';
+const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+const APP_VERSION = 'v2026.07.14-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
@@ -42,11 +43,11 @@ let isDayModalOpen = false;
 let activeDatePickerInput = null;
 let datePickerValue = selectedDate;
 let datePickerCursor = startOfMonth(new Date());
-let googleTokenClient = null;
-let googleAccessToken = '';
+const googleTokenClients = new Map();
+const googleAccessTokens = new Map();
 let settingsAutosaveTimer = null;
 let settingsAutosaveSections = new Set();
-let driveAuthPrompt = 'consent';
+let driveAuthPrompt = '';
 let driveSyncTimer = null;
 let driveSyncInFlight = false;
 let driveSyncQueued = false;
@@ -1398,7 +1399,7 @@ function syncStatusText() {
   if (firebaseUser) return state.settings.googleSyncEnabled ? 'NINQクラウドON' : 'ログイン済み';
   if (window.NinqFirebaseCloud) return state.settings.googleSyncEnabled ? 'ログイン待ち' : '未ログイン';
   if (driveSyncInFlight) return '同期中';
-  if (googleAccessToken) return state.settings.googleSyncEnabled ? '自動同期ON' : 'ログイン済み';
+  if (hasGoogleAccessToken(GOOGLE_DRIVE_SCOPE) || hasGoogleAccessToken(GOOGLE_CALENDAR_SCOPE)) return state.settings.googleSyncEnabled ? '自動同期ON' : 'ログイン済み';
   if (state.settings.googleClientId) return state.settings.googleSyncEnabled ? '自動同期ON・再ログイン待ち' : '設定済み';
   return '未設定';
 }
@@ -2003,42 +2004,65 @@ function loadGoogleIdentity() {
     document.head.appendChild(script);
   });
 }
-async function getDriveToken(prompt = '') {
+function googleAccessToken(scope) {
+  const saved = googleAccessTokens.get(scope);
+  if (!saved || saved.expiresAt <= Date.now() + 60000) {
+    googleAccessTokens.delete(scope);
+    return '';
+  }
+  return saved.value;
+}
+function hasGoogleAccessToken(scope) { return !!googleAccessToken(scope); }
+function clearGoogleAccessToken(scope) { googleAccessTokens.delete(scope); }
+function googleAuthErrorMessage(error, serviceLabel) {
+  const code = error?.type || error?.error || error?.message || '';
+  if (code === 'popup_closed' || code === 'access_denied') return `${serviceLabel}の認証がキャンセルされました`;
+  if (code === 'popup_failed_to_open') return `${serviceLabel}の認証画面を開けませんでした。ブラウザのポップアップを許可してください`;
+  if (code === 'interaction_required' || code === 'login_required') return `${serviceLabel}への再接続が必要です。もう一度ボタンを押してアカウントを選択してください`;
+  return `${serviceLabel}の認証に失敗しました${code ? `（${code}）` : ''}`;
+}
+async function getGoogleToken(scope, prompt = 'select_account', serviceLabel = 'Google') {
+  const cached = googleAccessToken(scope);
+  if (cached) return cached;
   const clientId = document.getElementById('google-client-id')?.value.trim() || state.settings.googleClientId;
   if (!clientId) throw new Error('GoogleクライアントIDを入力して保存してください');
   await loadGoogleIdentity();
   return new Promise((resolve, reject) => {
-    googleTokenClient = window.google.accounts.oauth2.initTokenClient({
+    const tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: clientId,
-      scope: DRIVE_SCOPE,
+      scope,
+      include_granted_scopes: false,
       callback: (response) => {
-        if (response.error) { reject(new Error(response.error)); return; }
-        googleAccessToken = response.access_token;
+        if (response.error) { reject(new Error(googleAuthErrorMessage(response, serviceLabel))); return; }
+        const expiresIn = Math.max(0, num(response.expires_in));
+        googleAccessTokens.set(scope, { value: response.access_token, expiresAt: Date.now() + expiresIn * 1000 });
         const status = document.getElementById('drive-sync-status'); if (status) status.textContent = 'ログイン済み';
-        resolve(googleAccessToken);
+        resolve(response.access_token);
       },
+      error_callback: (error) => reject(new Error(googleAuthErrorMessage(error, serviceLabel))),
     });
-    googleTokenClient.requestAccessToken({ prompt });
+    googleTokenClients.set(scope, tokenClient);
+    tokenClient.requestAccessToken({ prompt });
   });
 }
-async function driveFetch(url, options = {}, retry = true) {
-  const token = googleAccessToken || await getDriveToken(driveAuthPrompt);
+function getDriveToken(prompt = 'select_account') { return getGoogleToken(GOOGLE_DRIVE_SCOPE, prompt, 'Google Drive'); }
+function getCalendarToken(prompt = 'select_account') { return getGoogleToken(GOOGLE_CALENDAR_SCOPE, prompt, 'Googleカレンダー'); }
+async function driveFetch(url, options = {}) {
+  const token = googleAccessToken(GOOGLE_DRIVE_SCOPE) || await getDriveToken(driveAuthPrompt);
   const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } });
-  if (response.status === 401 && retry) {
-    googleAccessToken = '';
-    await getDriveToken(driveAuthPrompt);
-    return driveFetch(url, options, false);
+  if (response.status === 401) {
+    clearGoogleAccessToken(GOOGLE_DRIVE_SCOPE);
+    throw new Error('Google Driveへの再接続が必要です。手動操作からもう一度実行してください');
   }
   if (!response.ok) throw new Error(await response.text() || `Google Driveエラー ${response.status}`);
   return response;
 }
-async function calendarFetch(url, options = {}, retry = true) {
-  const token = googleAccessToken || await getDriveToken(driveAuthPrompt);
+async function calendarFetch(url, options = {}) {
+  const token = googleAccessToken(GOOGLE_CALENDAR_SCOPE) || await getCalendarToken('select_account');
   const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } });
-  if (response.status === 401 && retry) {
-    googleAccessToken = '';
-    await getDriveToken(driveAuthPrompt);
-    return calendarFetch(url, options, false);
+  if (response.status === 401) {
+    clearGoogleAccessToken(GOOGLE_CALENDAR_SCOPE);
+    throw new Error('Googleカレンダーへの再接続が必要です。もう一度「選択期間をGoogle登録」を押してアカウントを選択してください');
   }
   return response;
 }
@@ -2174,7 +2198,7 @@ async function resolveDriveConflict(file, remotePayload, { auto = false } = {}) 
 async function loginGoogleDrive() {
   try {
     saveGoogleSettings({ feedback: false, render: false, touch: false });
-    await getDriveToken('consent');
+    await getDriveToken('select_account');
     state.settings.googleSyncEnabled = true;
     markSettingsSections('google');
     saveState();
@@ -2194,10 +2218,10 @@ async function sendDeviceToDrive() {
   driveSyncInFlight = true;
   const previousPrompt = driveAuthPrompt;
   try {
-    driveAuthPrompt = 'consent';
+    driveAuthPrompt = 'select_account';
     saveGoogleSettings({ feedback: false, render: false, touch: false });
     setSyncLog('この端末のデータをクラウドへ送っています...');
-    await getDriveToken(googleAccessToken ? '' : driveAuthPrompt);
+    await getDriveToken(driveAuthPrompt);
     await pushDriveStateToFile();
     setSyncLog(`この端末から送りました。予定 ${state.entries.length}件`);
   } catch (error) {
@@ -2216,10 +2240,10 @@ async function receiveDeviceFromDrive() {
   driveSyncInFlight = true;
   const previousPrompt = driveAuthPrompt;
   try {
-    driveAuthPrompt = 'consent';
+    driveAuthPrompt = 'select_account';
     saveGoogleSettings({ feedback: false, render: false, touch: false });
     setSyncLog('クラウドからデータを受け取っています...');
-    await getDriveToken(googleAccessToken ? '' : driveAuthPrompt);
+    await getDriveToken(driveAuthPrompt);
     const file = await findDriveSyncFile();
     if (!file) { setSyncLog('クラウドにNINQデータがまだありません。先に別端末で「この端末から送る」を押してください'); return; }
     const remotePayload = await readDriveSyncFile(file.id);
@@ -2254,10 +2278,10 @@ async function syncGoogleDrive({ auto = false, reason = '' } = {}) {
   driveSyncInFlight = true;
   const previousPrompt = driveAuthPrompt;
   try {
-    driveAuthPrompt = auto ? '' : 'consent';
+    driveAuthPrompt = auto ? '' : 'select_account';
     saveGoogleSettings({ feedback: false, render: false, touch: false });
     setSyncLog(auto && reason === 'save' ? '変更をGoogle Driveへ保存中です...' : (auto ? 'Google Driveから最新データを確認中です...' : 'Google Driveと同期中です...'));
-    await getDriveToken(googleAccessToken ? '' : driveAuthPrompt);
+    await getDriveToken(driveAuthPrompt);
     const file = await findDriveSyncFile();
     if (!file) {
       await pushDriveStateToFile();
@@ -2553,11 +2577,9 @@ async function exportRangeCalendarIcs() {
   if (end < start) { setSyncLog('終了日は開始日以降にしてください'); return; }
   const entries = calendarRangeEntries();
   const groups = calendarExportGroups(entries);
-  const previousPrompt = driveAuthPrompt;
   try {
     saveGoogleSettings({ feedback: false, render: false, touch: false });
-    driveAuthPrompt = 'consent';
-    await getDriveToken('consent');
+    await getCalendarToken('select_account');
     const calendarId = state.settings.googleCalendarId || 'primary';
     setSyncLog('Googleカレンダー上のNINQ予定を確認中です...');
     const googleEvents = await listNinqGoogleCalendarEvents(calendarId, start, end);
@@ -2586,8 +2608,6 @@ async function exportRangeCalendarIcs() {
     renderSyncScreen();
   } catch (error) {
     setSyncLog(error.message || 'Googleカレンダー登録に失敗しました');
-  } finally {
-    driveAuthPrompt = previousPrompt;
   }
 }
 function openSelectedDayGoogleCalendar() {
