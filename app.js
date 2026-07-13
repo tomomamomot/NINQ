@@ -5,7 +5,7 @@ const SYNC_PENDING_KEY = 'ninq-sync-pending-v1';
 const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join('')];
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.11-1';
+const APP_VERSION = 'v2026.07.13-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
@@ -98,6 +98,8 @@ function fontSizeOptions(selected) {
 function normalizeState(source) {
   const settings = { ...clone(DEFAULT_SETTINGS), ...(source.settings || {}) };
   settings.companies = Array.isArray(settings.companies) ? settings.companies.filter(Boolean) : [];
+  settings.companyRates = normalizeCompanyRates(settings.companyRates, settings.companies);
+  settings.companies = settings.companyRates.map((item) => item.name);
   settings.expenseItems = normalizeExpenseItems(settings.expenseItems);
   settings.companyInvoiceModes = settings.companyInvoiceModes && typeof settings.companyInvoiceModes === 'object' ? settings.companyInvoiceModes : {};
   settings.deletedCompanyPresetIds = settings.deletedCompanyPresetIds && typeof settings.deletedCompanyPresetIds === 'object' ? settings.deletedCompanyPresetIds : {};
@@ -107,7 +109,11 @@ function normalizeState(source) {
   settings.invoiceFontSize = fontSizeLevel(settings.invoiceFontSize);
   if (!['newer', 'confirm'].includes(settings.googleConflictMode)) settings.googleConflictMode = DEFAULT_SETTINGS.googleConflictMode;
   settings.settingUpdatedAt = settings.settingUpdatedAt && typeof settings.settingUpdatedAt === 'object' ? settings.settingUpdatedAt : {};
-  const entries = Array.isArray(source.entries) ? source.entries.map(normalizeEntry) : [];
+  const entries = Array.isArray(source.entries) ? source.entries.map((item) => {
+    const entry = normalizeEntry(item);
+    entry.company = companyCanonicalNameFromPresets(entry.company, settings.companyRates);
+    return entry;
+  }) : [];
   const receipts = Array.isArray(source.receipts) ? source.receipts.map(normalizeReceipt) : [];
   const deletedEntryIds = source.deletedEntryIds && typeof source.deletedEntryIds === 'object' ? source.deletedEntryIds : {};
   const deletedReceiptIds = source.deletedReceiptIds && typeof source.deletedReceiptIds === 'object' ? source.deletedReceiptIds : {};
@@ -370,17 +376,36 @@ function cleanupLegacyDisplayPreferences() {
   } catch (error) {}
 }
 function companyOptions() { return companyPresets().map((item) => item.name).sort((a, b) => a.localeCompare(b, 'ja')); }
+function companyOptionPresets() { return companyPresets().sort((a, b) => String(a.sheetName || a.name).localeCompare(String(b.sheetName || b.name), 'ja')); }
 function companyPresets() { return normalizeCompanyRates(state.settings.companyRates, state.settings.companies); }
 function companyPresetByName(name) { return companyPresets().find((item) => item.name === name); }
 function companyOfficialName(name) { return (companyPresetByName(name) || companyPresetByAnyName(name))?.officialName || name; }
 function companyInvoiceHonorific(name) { return normalizeInvoiceHonorific((companyPresetByName(name) || companyPresetByAnyName(name))?.invoiceHonorific); }
 function companySheetName(name) { const preset = companyPresetByName(name) || companyPresetByAnyName(name); return preset?.sheetName || companySheetNameFromOfficial(preset?.officialName || name); }
-function companyPresetByAnyName(value) {
-  const key = String(value || '').trim();
+function companyNameLookupKey(value) {
+  return companySheetNameFromOfficial(value).replace(/\s+/gu, '').toLocaleLowerCase('ja');
+}
+function findCompanyPresetByAnyName(value, presets) {
+  const key = companyNameLookupKey(value);
   if (!key) return null;
-  return companyPresets().find((item) => [item.name, item.sheetName, item.officialName].some((name) => String(name || '').trim() === key)) || null;
+  const items = presets || [];
+  const aliasesFor = (item) => [...new Set([item.name, item.sheetName, item.officialName].map(companyNameLookupKey).filter(Boolean))];
+  const exact = items.find((item) => aliasesFor(item).includes(key));
+  if (exact) return exact;
+  const candidates = items.filter((item) => aliasesFor(item).some((alias) => alias.startsWith(key) || key.startsWith(alias)));
+  return candidates.length === 1 ? candidates[0] : null;
+}
+function companyPresetByAnyName(value) {
+  return findCompanyPresetByAnyName(value, companyPresets());
+}
+function companyCanonicalNameFromPresets(value, presets) {
+  const key = String(value || '').trim();
+  if (!key) return '';
+  const preset = findCompanyPresetByAnyName(key, presets);
+  return preset?.name || key;
 }
 function normalizeCompanyInputName(value) { return companyPresetByAnyName(value)?.name || String(value || '').trim(); }
+function companyCalendarName(value) { return companyPresetByAnyName(value)?.name || String(value || '').trim(); }
 function companyClosingDay(name) { return closingDayValue(companyPresetByName(name)?.closingDay); }
 function companyBillingRange(name, baseDate = cursor) {
   const closingDay = companyClosingDay(name);
@@ -720,7 +745,7 @@ function getInvoiceCompanies() {
 }
 function companyInvoiceMode(company) { return state.settings.companyInvoiceModes?.[company] || 'with'; }
 function setCompanyInvoiceMode(company, mode) { state.settings.companyInvoiceModes[company] = mode; saveState(); }
-function companyEventTitle(entry) { return [entry.company, entry.site].filter(Boolean).join(' / ') || '現場予定'; }
+function companyEventTitle(entry) { return [companyCalendarName(entry.company), entry.site].filter(Boolean).join(' / ') || '現場予定'; }
 function adjacentYmd(ymd, offset) { const d = fromYmd(ymd); d.setDate(d.getDate() + offset); return toYmd(d); }
 function hasAdjacentCompany(ymd, entry) {
   if (!entry.company) return false;
@@ -921,7 +946,7 @@ function renderDayEntries() {
   }
   body.innerHTML = `<div class="day-mini-list">${entries.map((entry) => {
     const isSub = entry.type === 'sub';
-    return `<div class="day-mini-card ${shiftClass(entry.shift)} ${isSub ? 'sub' : ''}"><div class="day-mini-row"><div class="day-mini-main"><div class="day-mini-site">${escapeHtml(entry.site || '現場名未入力')}</div><div class="day-mini-company">${escapeHtml(entry.company || '会社名未入力')} ・ ${isSub ? escapeHtml(entry.workerName || '外注職人') : '自分'} ・ ${shiftLabel(entry.shift)}</div></div><div class="day-mini-side"><div class="pill ${isSub ? 'sub' : shiftClass(entry.shift)}">${isSub ? '外注' : shiftLabel(entry.shift)}</div>${renderEntryExpenseChips(entry)}</div></div><div class="day-mini-actions"><button class="day-mini-btn" type="button" data-edit-entry="${entry.id}">編集</button><button class="day-mini-btn del" type="button" data-del-entry="${entry.id}">削除</button></div></div>`;
+    return `<div class="day-mini-card ${shiftClass(entry.shift)} ${isSub ? 'sub' : ''}"><div class="day-mini-row"><div class="day-mini-main"><div class="day-mini-site">${escapeHtml(entry.site || '現場名未入力')}</div><div class="day-mini-company">${escapeHtml(companyCalendarName(entry.company) || '会社名未入力')} ・ ${isSub ? escapeHtml(entry.workerName || '外注職人') : '自分'} ・ ${shiftLabel(entry.shift)}</div></div><div class="day-mini-side"><div class="pill ${isSub ? 'sub' : shiftClass(entry.shift)}">${isSub ? '外注' : shiftLabel(entry.shift)}</div>${renderEntryExpenseChips(entry)}</div></div><div class="day-mini-actions"><button class="day-mini-btn" type="button" data-edit-entry="${entry.id}">編集</button><button class="day-mini-btn del" type="button" data-del-entry="${entry.id}">削除</button></div></div>`;
   }).join('')}<button class="btn-primary" type="button" data-add-date="${selectedDate}">予定を追加</button></div>`;
   modal.classList.toggle('open', isDayModalOpen);
 }
@@ -1598,9 +1623,11 @@ function openModal(type, id = null) {
   const isSub = entry.type === 'sub' || type === 'sub';
   const expenseFields = modalExpenseItems().map((item) => `<div class="field"><label>${escapeHtml(item.label)}</label><input type="number" min="0" step="1" data-expense-id="${item.id}" value="${num(entry.expenses?.[item.id]) || ''}"></div>`).join('');
   const typeButtons = `<button class="type-btn ${entry.type === 'self' ? 'active' : ''}" data-entry-type="self" type="button">自分</button>${subcontractEnabled() || entry.type === 'sub' ? `<button class="type-btn ${entry.type === 'sub' ? 'active' : ''}" data-entry-type="sub" type="button">外注職人</button>` : ''}`;
-  const companyChoices = companyOptions();
-  const companyOptionsHtml = companyChoices.map((name) => `<option value="${escapeHtml(name)}" ${name === entry.company ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
-  const companyPickBlock = `<div class="company-combo"><select id="f-company-select"><option value="">選択</option>${companyOptionsHtml}</select><input id="f-company" value="${escapeHtml(entry.company)}" placeholder="自由入力できます"></div>`;
+  const entryCompany = normalizeCompanyInputName(entry.company);
+  const companyChoices = companyOptionPresets();
+  const companyOptionsHtml = companyChoices.map((preset) => `<option value="${escapeHtml(preset.name)}" ${preset.name === entryCompany ? 'selected' : ''}>${escapeHtml(preset.sheetName || preset.name)}</option>`).join('');
+  const companyInputValue = companyPresetByAnyName(entry.company)?.sheetName || entry.company;
+  const companyPickBlock = `<div class="company-combo"><select id="f-company-select"><option value="">選択</option>${companyOptionsHtml}</select><input id="f-company" value="${escapeHtml(companyInputValue)}" placeholder="法人格なしの会社名を入力できます"></div>`;
   document.getElementById('modal-title').textContent = id ? '予定を編集' : '予定を追加';
   document.getElementById('modal-body').innerHTML = `
     <div class="type-sel">${typeButtons}</div>
@@ -1632,7 +1659,7 @@ function closeModal() {
   editingId = null;
 }
 function applyCompanyRate(name) {
-  const preset = companyPresetByName(name);
+  const preset = companyPresetByName(name) || companyPresetByAnyName(name);
   if (!preset) return;
   const shift = document.getElementById('f-shift')?.value || 'day';
   const rate = rateForPresetShift(preset, shift);
@@ -2318,7 +2345,7 @@ function calendarDescription(entry) {
   return lines.join('\n');
 }
 function calendarExportKey(entry) {
-  const company = String(entry.company || '').trim();
+  const company = normalizeCompanyInputName(entry.company);
   const site = String(entry.site || '').trim();
   if (company && site) return [entry.type || 'self', entry.shift || 'day', company, site, entry.workerName || ''].join('\u001f');
   if (entry.rangeGroupId) return `range:${entry.rangeGroupId}`;
@@ -2397,9 +2424,54 @@ function calendarGroupEndExclusive(group) {
   return toYmd(endDate);
 }
 function isSameGoogleCalendarEvent(event, group) {
-  return event?.summary === calendarExportTitle(group)
+  return isNinqGoogleCalendarEvent(event)
+    && event?.summary === calendarExportTitle(group)
     && event?.start?.date === group.start
     && event?.end?.date === calendarGroupEndExclusive(group);
+}
+function isNinqGoogleCalendarEvent(event) {
+  return event?.extendedProperties?.private?.app === 'NINQ' || String(event?.id || '').startsWith('ninq');
+}
+function calendarRangeEndExclusive(end) {
+  const date = fromYmd(end);
+  date.setDate(date.getDate() + 1);
+  return toYmd(date);
+}
+async function listNinqGoogleCalendarEvents(calendarId, start, end) {
+  const encodedCalendarId = encodeURIComponent(calendarId || 'primary');
+  const events = [];
+  let pageToken = '';
+  do {
+    const params = new URLSearchParams({
+      singleEvents: 'true',
+      maxResults: '2500',
+      timeMin: `${start}T00:00:00+09:00`,
+      timeMax: `${calendarRangeEndExclusive(end)}T00:00:00+09:00`,
+      privateExtendedProperty: 'app=NINQ',
+      fields: 'nextPageToken,items(id,summary,start,end,extendedProperties)',
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+    const response = await calendarFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodedCalendarId}/events?${params.toString()}`);
+    if (!response.ok) throw new Error(await googleErrorText(response, `Googleカレンダー確認エラー ${response.status}`));
+    const data = await response.json();
+    events.push(...(data.items || []).filter(isNinqGoogleCalendarEvent));
+    pageToken = data.nextPageToken || '';
+  } while (pageToken);
+  return events;
+}
+function staleNinqGoogleCalendarEvents(events, groups, start, end) {
+  const rangeEnd = calendarRangeEndExclusive(end);
+  const remaining = events.filter((event) => event?.start?.date >= start && event?.end?.date <= rangeEnd);
+  groups.forEach((group) => {
+    const index = remaining.findIndex((event) => isSameGoogleCalendarEvent(event, group));
+    if (index >= 0) remaining.splice(index, 1);
+  });
+  return remaining;
+}
+async function deleteGoogleCalendarEvent(calendarId, eventId) {
+  const encodedCalendarId = encodeURIComponent(calendarId || 'primary');
+  const response = await calendarFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodedCalendarId}/events/${encodeURIComponent(eventId)}`, { method: 'DELETE' });
+  if (!response.ok && response.status !== 404) throw new Error(await googleErrorText(response, `Googleカレンダー削除エラー ${response.status}`));
 }
 async function findExistingGoogleCalendarEvent(calendarId, group) {
   const encodedCalendarId = encodeURIComponent(calendarId || 'primary');
@@ -2480,7 +2552,6 @@ async function exportRangeCalendarIcs() {
   if (!start || !end) { setSyncLog('開始日と終了日を選んでください'); return; }
   if (end < start) { setSyncLog('終了日は開始日以降にしてください'); return; }
   const entries = calendarRangeEntries();
-  if (!entries.length) { setSyncLog(`${start}〜${end}の予定がありません`); return; }
   const groups = calendarExportGroups(entries);
   const previousPrompt = driveAuthPrompt;
   try {
@@ -2488,14 +2559,30 @@ async function exportRangeCalendarIcs() {
     driveAuthPrompt = 'consent';
     await getDriveToken('consent');
     const calendarId = state.settings.googleCalendarId || 'primary';
-    setSyncLog(`${groups.length}件をGoogleカレンダーへ登録中です...`);
-    const result = { created: 0, updated: 0 };
+    setSyncLog('Googleカレンダー上のNINQ予定を確認中です...');
+    const googleEvents = await listNinqGoogleCalendarEvents(calendarId, start, end);
+    const staleEvents = staleNinqGoogleCalendarEvents(googleEvents, groups, start, end);
+    const result = { created: 0, updated: 0, deleted: 0, kept: 0 };
+    if (staleEvents.length) {
+      const shouldDelete = confirm(`NINQで削除・変更されたGoogleカレンダー予定が${staleEvents.length}件あります。Googleカレンダーからも削除しますか？\n\nGoogle側で手入力した予定は削除されません。`);
+      if (shouldDelete) {
+        setSyncLog(`${staleEvents.length}件の不要なNINQ予定をGoogleカレンダーから削除中です...`);
+        for (const event of staleEvents) {
+          await deleteGoogleCalendarEvent(calendarId, event.id);
+          result.deleted += 1;
+        }
+      } else {
+        result.kept = staleEvents.length;
+      }
+    }
+    setSyncLog(`${groups.length}件をGoogleカレンダーへ登録・更新中です...`);
     for (const group of groups) {
       const status = await upsertGoogleCalendarEvent(calendarId, group);
       if (status === 'created') result.created += 1;
       else result.updated += 1;
     }
-    setSyncLog(`${start}〜${end}をGoogleカレンダーへ反映しました。新規${result.created}件 / 更新${result.updated}件`);
+    const keptText = result.kept ? ` / 削除せず残した予定${result.kept}件` : '';
+    setSyncLog(`${start}〜${end}をGoogleカレンダーへ反映しました。新規${result.created}件 / 更新${result.updated}件 / 削除${result.deleted}件${keptText}`);
     renderSyncScreen();
   } catch (error) {
     setSyncLog(error.message || 'Googleカレンダー登録に失敗しました');
@@ -3083,7 +3170,7 @@ function bindEvents() {
     const editButton = event.target.closest('[data-edit-entry]'); if (editButton) { closeDayModal(); openModal('self', editButton.dataset.editEntry); return; }
     const delButton = event.target.closest('[data-del-entry]'); if (delButton) { if (confirm('この予定を削除しますか？')) deleteEntry(delButton.dataset.delEntry); return; }
     const companySelect = event.target.closest('#f-company-select');
-    if (companySelect) { const input = document.getElementById('f-company'); if (input && companySelect.value) { input.value = companySelect.value; applyCompanyRate(companySelect.value); updateSubcontractDiff(); } return; }
+    if (companySelect) { const input = document.getElementById('f-company'); if (input && companySelect.value) { input.value = companySheetName(companySelect.value); applyCompanyRate(companySelect.value); updateSubcontractDiff(); } return; }
     const applyReceipt = event.target.closest('[data-apply-receipt]');
     if (applyReceipt) { applyReceiptToEntry(applyReceipt.dataset.applyReceipt); return; }
     const retryReceipt = event.target.closest('[data-ocr-retry]');
@@ -3195,13 +3282,15 @@ function bindEvents() {
     if (event.target.matches('#st-tax,#st-invoice-font-size')) { scheduleSettingsAutosave({ immediate: true, section: 'invoice' }); return; }
     if (event.target.matches('#st-ui-size,#st-font-choice')) { scheduleSettingsAutosave({ immediate: true, section: 'display' }); return; }
     if (event.target.matches('[data-range-exclude]')) { event.target.closest('.range-exclude-chip')?.classList.toggle('checked', event.target.checked); return; }
-    if (event.target.id === 'f-company-select') { const input = document.getElementById('f-company'); if (input && event.target.value) { input.value = event.target.value; applyCompanyRate(event.target.value); updateSubcontractDiff(); } return; }
+    if (event.target.id === 'f-company-select') { const input = document.getElementById('f-company'); if (input && event.target.value) { input.value = companySheetName(event.target.value); applyCompanyRate(event.target.value); updateSubcontractDiff(); } return; }
     if (event.target.matches('[data-receipt-category]')) { updateReceiptField(event.target.dataset.receiptCategory, { category: event.target.value, status: '確認済み' }); renderAll(); return; }
     if (event.target.matches('[data-receipt-entry]')) { updateReceiptField(event.target.dataset.receiptEntry, { targetEntryId: event.target.value, status: '確認済み' }); return; }
     if (event.target.matches('[data-receipt-date]')) { updateReceiptField(event.target.dataset.receiptDate, { date: event.target.value, status: '確認済み' }); renderAll(); return; }
     if (event.target.matches('[data-receipt-amount]')) { updateReceiptField(event.target.dataset.receiptAmount, { amount: num(event.target.value), status: '確認済み' }); return; }
     if (event.target.id === 'f-company') {
-      const select = document.getElementById('f-company-select'); if (select) select.value = companyOptions().includes(event.target.value.trim()) ? event.target.value.trim() : '';
+      const select = document.getElementById('f-company-select');
+      const preset = companyPresetByAnyName(event.target.value);
+      if (select) select.value = preset?.name || '';
     }
     if (event.target.id === 'f-shift') { applyCompanyRate(document.getElementById('f-company')?.value.trim()); updateSubcontractDiff(); }
   });
