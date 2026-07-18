@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.18-1';
+const APP_VERSION = 'v2026.07.18-2';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -748,7 +748,7 @@ function renderNav() {
   document.getElementById(`sc-${activeScreen}`)?.classList.add('active');
   document.getElementById('sc-cal')?.classList.toggle('pc-pinned', activeScreen !== 'cal');
   document.querySelectorAll('.nav-item').forEach((el) => el.classList.toggle('active', el.dataset.screen === activeScreen));
-  document.querySelectorAll('[data-screen="sync"]').forEach((el) => { el.textContent = 'NINQクラウド'; });
+  document.querySelectorAll('[data-screen="sync"]').forEach((el) => { el.textContent = '同期・連携'; });
   syncMenuClones();
   document.querySelectorAll('[data-screen="sub"],[data-screen-link="sub"]').forEach((el) => el.classList.toggle('hidden', !subcontractEnabled()));
   document.getElementById('fab-sub')?.classList.toggle('hidden', !subcontractEnabled());
@@ -759,7 +759,7 @@ function syncMenuClones() {
   const template = `
     <button class="top-menu-item" data-screen-link="cal">カレンダー</button>
     <button class="top-menu-item" data-screen-link="inv">請求書、出面表</button>
-    <button class="top-menu-item" data-screen-link="sync">NINQクラウド</button>
+    <button class="top-menu-item" data-screen-link="sync">同期・連携</button>
     ${subItem}
     <button class="top-menu-item" data-screen-link="st">設定</button>
     <button class="top-menu-item" data-sales-toggle>${state.settings.showSales ? '売上を隠す' : '売上を表示'}</button>`;
@@ -1439,7 +1439,7 @@ function syncStatusText() {
 function renderSyncScreen() {
   const month = monthEntries();
   const sub = document.getElementById('sync-sub'); if (sub) sub.textContent = '出力と引き継ぎ';
-  const syncTopTitle = document.querySelector('#sc-sync .topbar-title'); if (syncTopTitle) syncTopTitle.textContent = 'NINQクラウド';
+  const syncTopTitle = document.querySelector('#sc-sync .topbar-title'); if (syncTopTitle) syncTopTitle.textContent = '同期・連携';
   if (sub) sub.textContent = firebaseUser ? '自動同期中' : '初回ログインのみ';
   const cloudSection = document.querySelector('#sc-sync .sync-section:nth-of-type(2)');
   if (cloudSection) {

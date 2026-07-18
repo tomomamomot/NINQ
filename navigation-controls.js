@@ -6,7 +6,7 @@
   const MENU_ITEMS = [
     { screen: 'cal', label: 'カレンダー' },
     { screen: 'inv', label: '請求書、出面表' },
-    { screen: 'sync', label: 'NINQクラウド' },
+    { screen: 'sync', label: '同期・連携' },
     { screen: 'sub', label: '外注' },
     { screen: 'st', label: '設定' },
   ];
