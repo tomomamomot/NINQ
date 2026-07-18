@@ -6,13 +6,9 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.14-1';
+const APP_VERSION = 'v2026.07.18-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
-const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
-const TESSERACT_WORKER_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js';
-const TESSERACT_CORE_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd.wasm.js';
-const TESSERACT_LANG_URL = 'https://tessdata.projectnaptha.com/4.0.0';
-const RECEIPT_OCR_TIMEOUT_MS = 90000;
+const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
@@ -37,6 +33,8 @@ let state = loadState();
 let cursor = startOfMonth(new Date());
 let selectedDate = toYmd(new Date());
 let selectedCompany = '';
+let invoiceViewMode = 'monthly';
+let expandedAnnualMonth = '';
 let activeScreen = 'cal';
 let editingId = null;
 let isDayModalOpen = false;
@@ -72,7 +70,11 @@ let expenseQuickViewportBound = false;
 function loadState() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return normalizeState(JSON.parse(raw));
+    if (raw) {
+      const normalized = normalizeState(JSON.parse(raw));
+      localStorage.setItem(STORE_KEY, JSON.stringify(normalized));
+      return normalized;
+    }
     for (const key of LEGACY_STORE_KEYS) {
       const legacy = localStorage.getItem(key);
       if (!legacy) continue;
@@ -115,10 +117,15 @@ function normalizeState(source) {
     entry.company = companyCanonicalNameFromPresets(entry.company, settings.companyRates);
     return entry;
   }) : [];
-  const receipts = Array.isArray(source.receipts) ? source.receipts.map(normalizeReceipt) : [];
   const deletedEntryIds = source.deletedEntryIds && typeof source.deletedEntryIds === 'object' ? source.deletedEntryIds : {};
-  const deletedReceiptIds = source.deletedReceiptIds && typeof source.deletedReceiptIds === 'object' ? source.deletedReceiptIds : {};
-  return { entries, receipts, deletedEntryIds, deletedReceiptIds, settings };
+  const deletedReceiptIds = { ...(source.deletedReceiptIds && typeof source.deletedReceiptIds === 'object' ? source.deletedReceiptIds : {}) };
+  (Array.isArray(source.receipts) ? source.receipts : []).forEach((receipt) => {
+    const id = String(receipt?.id || '').trim();
+    if (!id) return;
+    const removedAt = new Date(Math.max(Date.now(), dateTime(RECEIPT_REMOVAL_AT), dateTime(receipt?.updatedAt) + 1, dateTime(receipt?.importedAt) + 1)).toISOString();
+    if (dateTime(deletedReceiptIds[id]) < dateTime(removedAt)) deletedReceiptIds[id] = removedAt;
+  });
+  return { entries, receipts: [], deletedEntryIds, deletedReceiptIds, settings };
 }
 function normalizeExpenseItems(items) {
   const list = Array.isArray(items) ? items : [];
@@ -178,17 +185,6 @@ function normalizeCompanyRates(items, companies = []) {
   companies.filter(Boolean).forEach((name) => { if (!deduped.some((item) => item.name === name)) deduped.push({ id: crypto.randomUUID(), name, sheetName: companySheetNameFromOfficial(name), officialName: name, invoiceHonorific: '御中', dayRate: 0, nightRate: 0, otRate: 0, closingDay: 0, updatedAt: '' }); });
   return deduped;
 }
-function normalizeReceipt(receipt) {
-  return {
-    id: String(receipt.id || crypto.randomUUID()), fileName: receipt.fileName || '領収書', importedAt: receipt.importedAt || new Date().toISOString(),
-    category: receipt.category || guessReceiptCategory(`${receipt.fileName || ''} ${receipt.ocrText || ''}`),
-    amount: num(receipt.amount || 0), date: receipt.date || '', vendor: receipt.vendor || '',
-    ocrText: receipt.ocrText || '', imageData: receipt.imageData || '', status: receipt.status || '未確認',
-    targetEntryId: receipt.targetEntryId || receipt.appliedEntryId || '', appliedEntryId: receipt.appliedEntryId || '',
-    appliedExpenseId: receipt.appliedExpenseId || '', appliedAmount: num(receipt.appliedAmount || 0),
-    updatedAt: receipt.updatedAt || receipt.importedAt || new Date().toISOString()
-  };
-}
 function normalizeEntry(entry) {
   const paymentAmountSet = entry.paymentAmountSet !== undefined
     ? !!entry.paymentAmountSet
@@ -227,28 +223,7 @@ function migrateLegacy(oldData) {
   return migrated;
 }
 function saveState(nextState = state) {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(nextState));
-  } catch (error) {
-    if (error?.name !== 'QuotaExceededError') throw error;
-    const compacted = clone(nextState);
-    const withImages = (compacted.receipts || [])
-      .filter((receipt) => receipt.imageData)
-      .sort((a, b) => String(a.importedAt || '').localeCompare(String(b.importedAt || '')));
-    let saved = false;
-    while (withImages.length && !saved) {
-      withImages.shift().imageData = '';
-      try {
-        localStorage.setItem(STORE_KEY, JSON.stringify(compacted));
-        saved = true;
-      } catch (retryError) {
-        if (retryError?.name !== 'QuotaExceededError') throw retryError;
-      }
-    }
-    if (!saved) throw error;
-    if (nextState === state) state.receipts = compacted.receipts;
-    window.setTimeout(() => showSaveFeedback('保存容量を確保するため古い領収書写真を整理しました'), 0);
-  }
+  localStorage.setItem(STORE_KEY, JSON.stringify(normalizeState(nextState)));
 }
 function loadSyncMeta() {
   try {
@@ -420,8 +395,8 @@ function companyBillingRange(name, baseDate = cursor) {
   start.setDate(start.getDate() + 1);
   return { start: toYmd(start), end: toYmd(end), closingDay };
 }
-function companyBillingPeriodLabel(name) {
-  const range = companyBillingRange(name);
+function companyBillingPeriodLabel(name, baseDate = cursor) {
+  const range = companyBillingRange(name, baseDate);
   return `${fmtDateJP(range.start)}〜${fmtDateJP(range.end)}（${closingDayLabel(range.closingDay)}）`;
 }
 function rateForPresetShift(preset, shift) { if (!preset) return 0; return shift === 'night' ? num(preset.nightRate) : num(preset.dayRate); }
@@ -683,15 +658,6 @@ function showSaveFeedback(message) {
   window.clearTimeout(showSaveFeedback.timer);
   showSaveFeedback.timer = window.setTimeout(() => el.classList.remove('show'), 2200);
 }
-function guessReceiptCategory(name) {
-  const text = String(name || '').toLowerCase();
-  if (/parking|駐車|パーキング/.test(text)) return '駐車場代';
-  if (/hotel|宿|旅館/.test(text)) return '宿泊費';
-  if (/gas|fuel|ガソリン|燃料/.test(text)) return 'ガソリン代';
-  if (/train|bus|taxi|交通|電車|バス|タクシー/.test(text)) return '交通費';
-  if (/資材|材料|工具|tool|ホームセンター|建材|金物/.test(text)) return '資材代';
-  return expenseItems()[0]?.label || 'その他';
-}
 function monthEntries() { const key = monthKey(cursor); return state.entries.filter((entry) => monthKey(entry.date) === key).sort((a, b) => a.date.localeCompare(b.date)); }
 function dayEntries(ymd) { return state.entries.filter((entry) => entry.date === ymd).sort((a, b) => a.createdAt.localeCompare(b.createdAt)); }
 function calcEntry(entry) {
@@ -732,16 +698,26 @@ function sortEntriesForDemen(a, b) {
 }
 function typeLabel(type) { return type === 'sub' ? '外注' : '自分'; }
 function invoiceBillableEntry(entry) { return entry.type === 'self' || entry.type === 'sub'; }
-function pickSelectedCompany() { const companies = getInvoiceCompanies(); if (!companies.length) { selectedCompany = ''; return companies; } if (!companies.includes(selectedCompany)) selectedCompany = companies[0]; return companies; }
-function entriesForInvoiceCompanyName(company) {
-  const range = companyBillingRange(company);
+function pickSelectedCompany() {
+  const companies = invoiceViewMode === 'annual' ? getAnnualInvoiceCompanies(cursor.getFullYear()) : getInvoiceCompanies();
+  if (!companies.length) { selectedCompany = ''; return companies; }
+  if (!companies.includes(selectedCompany)) selectedCompany = companies[0];
+  return companies;
+}
+function entriesForInvoiceCompanyName(company, baseDate = cursor) {
+  const range = companyBillingRange(company, baseDate);
   return state.entries
     .filter((entry) => invoiceBillableEntry(entry) && entry.company === company && entry.date >= range.start && entry.date <= range.end)
     .sort((a, b) => a.date.localeCompare(b.date));
 }
-function getInvoiceCompanies() {
+function getInvoiceCompanies(baseDate = cursor) {
   return [...new Set(state.entries.filter(invoiceBillableEntry).map((entry) => entry.company).filter(Boolean))]
-    .filter((company) => entriesForInvoiceCompanyName(company).length)
+    .filter((company) => entriesForInvoiceCompanyName(company, baseDate).length)
+    .sort((a, b) => a.localeCompare(b, 'ja'));
+}
+function getAnnualInvoiceCompanies(year) {
+  return [...new Set(state.entries.filter(invoiceBillableEntry).map((entry) => entry.company).filter(Boolean))]
+    .filter((company) => Array.from({ length: 12 }, (_, month) => entriesForInvoiceCompanyName(company, new Date(year, month, 1)).length).some(Boolean))
     .sort((a, b) => a.localeCompare(b, 'ja'));
 }
 function companyInvoiceMode(company) { return state.settings.companyInvoiceModes?.[company] || 'with'; }
@@ -759,7 +735,7 @@ function calendarTaskClass(entry, ymd, dayOfWeek) {
   return classes.filter(Boolean).join(' ');
 }
 
-function renderAll() { applyDisplayPreferences(); renderNav(); renderHeaders(); renderCalendar(); renderDayEntries(); renderDesktopSheet(); renderSubScreen(); renderInvoiceScreen(); renderSettings(); renderSyncScreen(); renderReceiptScreen(); }
+function renderAll() { applyDisplayPreferences(); renderNav(); renderHeaders(); renderCalendar(); renderDayEntries(); renderDesktopSheet(); renderSubScreen(); renderInvoiceScreen(); renderSettings(); renderSyncScreen(); }
 function renderNav() {
   if (activeScreen === 'sub' && !subcontractEnabled()) activeScreen = 'cal';
   if (activeScreen !== 'cal') {
@@ -784,7 +760,6 @@ function syncMenuClones() {
     <button class="top-menu-item" data-screen-link="cal">カレンダー</button>
     <button class="top-menu-item" data-screen-link="inv">請求書、出面表</button>
     <button class="top-menu-item" data-screen-link="sync">NINQクラウド</button>
-    <button class="top-menu-item" data-screen-link="receipt">経費</button>
     ${subItem}
     <button class="top-menu-item" data-screen-link="st">設定</button>
     <button class="top-menu-item" data-sales-toggle>${state.settings.showSales ? '売上を隠す' : '売上を表示'}</button>`;
@@ -795,8 +770,9 @@ function renderHeaders() {
   const version = document.getElementById('app-version-badge'); if (version) version.textContent = APP_VERSION;
   document.getElementById('cal-sub').textContent = `${monthText} ・ 予定 ${monthEntries().length}件`;
   document.getElementById('sub-sub').textContent = `${monthText}の外注出面`;
-  document.getElementById('inv-sub').textContent = `${monthText}の会社別帳票`;
-  ['cal', 'sub', 'inv'].forEach((prefix) => { const el = document.getElementById(`${prefix}-mnav`); if (el) el.textContent = monthText; });
+  document.getElementById('inv-sub').textContent = invoiceViewMode === 'annual' ? `${cursor.getFullYear()}年の会社別取引` : `${monthText}の会社別帳票`;
+  ['cal', 'sub'].forEach((prefix) => { const el = document.getElementById(`${prefix}-mnav`); if (el) el.textContent = monthText; });
+  const invoiceNav = document.getElementById('inv-mnav'); if (invoiceNav) invoiceNav.textContent = invoiceViewMode === 'annual' ? `${cursor.getFullYear()}年` : monthText;
 }
 function renderCalendar() {
   const grid = document.getElementById('cal-grid');
@@ -1333,64 +1309,121 @@ function buildDemenSheet(entries, totals, hidden) {
       </table>
     </div>`;
 }
+function annualCompanyMonths(company, year) {
+  return Array.from({ length: 12 }, (_, month) => {
+    const baseDate = new Date(year, month, 1);
+    const range = companyBillingRange(company, baseDate);
+    const entries = entriesForInvoiceCompanyName(company, baseDate);
+    const totals = invoiceTotals(entries);
+    const selfEntries = entries.filter((entry) => entry.type === 'self');
+    const subcontractEntries = entries.filter((entry) => entry.type === 'sub');
+    return {
+      month,
+      range,
+      entries,
+      totals,
+      selfQty: sumBy(selfEntries, (entry) => calcEntry(entry).qty),
+      subcontractQty: sumBy(subcontractEntries, (entry) => calcEntry(entry).qty),
+      subcontractPay: sumBy(subcontractEntries, (entry) => calcEntry(entry).subcontractPay),
+      subcontractDiff: sumBy(subcontractEntries, (entry) => calcEntry(entry).subcontractDiff),
+    };
+  });
+}
+function annualCompanyTotals(months) {
+  return months.reduce((all, month) => ({
+    qty: all.qty + month.totals.qty,
+    selfQty: all.selfQty + month.selfQty,
+    subcontractQty: all.subcontractQty + month.subcontractQty,
+    labor: all.labor + month.totals.labor,
+    overtime: all.overtime + month.totals.overtime,
+    expenses: all.expenses + month.totals.expenseTotal,
+    tax: all.tax + month.totals.tax,
+    total: all.total + month.totals.total,
+    subcontractPay: all.subcontractPay + month.subcontractPay,
+    subcontractDiff: all.subcontractDiff + month.subcontractDiff,
+  }), { qty: 0, selfQty: 0, subcontractQty: 0, labor: 0, overtime: 0, expenses: 0, tax: 0, total: 0, subcontractPay: 0, subcontractDiff: 0 });
+}
+function annualMonthDetailHtml(month, hidden) {
+  if (!month.entries.length) return '<div class="annual-detail-empty">この締め分の取引はありません</div>';
+  const rows = month.entries.map((entry) => {
+    const calc = calcEntry(entry);
+    const expenseText = expenseItems()
+      .map((item) => ({ label: item.label, value: num(entry.expenses?.[item.id]) }))
+      .filter((item) => item.value)
+      .map((item) => `${item.label} ${yenPlain(item.value, hidden)}`)
+      .join(' / ') || 'なし';
+    return `<tr>
+      <td>${escapeHtml(fmtDateJP(entry.date))}</td>
+      <td>${escapeHtml(shiftLabel(entry.shift))}</td>
+      <td class="left">${escapeHtml(entry.site || '現場未入力')}</td>
+      <td>${escapeHtml(typeLabel(entry.type))}</td>
+      <td class="left">${escapeHtml(entry.type === 'sub' ? entry.workerName || '職人名未入力' : state.settings.name || '自分')}</td>
+      <td>${qtyLabel(calc.qty)}</td>
+      <td class="right">${yenPlain(calc.unitRate, hidden)}</td>
+      <td class="right">${calc.otHours ? `${calc.otHours}h / ${yenPlain(calc.overtime, hidden)}` : '-'}</td>
+      <td class="left">${escapeHtml(expenseText)}</td>
+      <td class="right">${yenPlain(calc.subtotal, hidden)}</td>
+      <td class="right">${entry.type === 'sub' ? yenPlain(calc.subcontractPay, hidden) : '-'}</td>
+      <td class="right">${entry.type === 'sub' ? yenPlain(calc.subcontractDiff, hidden) : '-'}</td>
+    </tr>`;
+  }).join('');
+  const cards = month.entries.map((entry) => {
+    const calc = calcEntry(entry);
+    const expenseText = expenseItems()
+      .map((item) => ({ label: item.label, value: num(entry.expenses?.[item.id]) }))
+      .filter((item) => item.value)
+      .map((item) => `${item.label} ${yen(item.value, hidden)}`)
+      .join(' / ') || '経費なし';
+    return `<div class="annual-entry-card">
+      <div class="annual-entry-head"><strong>${escapeHtml(fmtDateJP(entry.date))} ${escapeHtml(shiftLabel(entry.shift))}</strong><span>${escapeHtml(typeLabel(entry.type))}</span></div>
+      <div class="annual-entry-site">${escapeHtml(entry.site || '現場未入力')}</div>
+      <div class="annual-entry-meta">${entry.type === 'sub' ? escapeHtml(entry.workerName || '職人名未入力') : escapeHtml(state.settings.name || '自分')} / ${qtyLabel(calc.qty)}人工 / 単価 ${yen(calc.unitRate, hidden)}</div>
+      <div class="annual-entry-meta">残業 ${calc.otHours ? `${calc.otHours}h ${yen(calc.overtime, hidden)}` : 'なし'} / ${escapeHtml(expenseText)}</div>
+      <div class="annual-entry-money"><span>売上 ${yen(calc.subtotal, hidden)}</span>${entry.type === 'sub' ? `<span>支払 ${yen(calc.subcontractPay, hidden)} / 差額 ${yen(calc.subcontractDiff, hidden)}</span>` : ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="annual-detail-table-wrap"><table class="annual-detail-table"><thead><tr><th>日付</th><th>昼夜</th><th>現場</th><th>区分</th><th>職人名</th><th>人工</th><th>単価</th><th>残業</th><th>経費</th><th>売上</th><th>外注支払</th><th>差額</th></tr></thead><tbody>${rows}</tbody></table></div><div class="annual-entry-list">${cards}</div>`;
+}
+function renderAnnualTransactions(company, hidden) {
+  const year = cursor.getFullYear();
+  const months = annualCompanyMonths(company, year);
+  const total = annualCompanyTotals(months);
+  const activeMonth = expandedAnnualMonth === '' ? null : months[Number(expandedAnnualMonth)];
+  const desktopRows = months.map((month) => `<tr class="annual-month-row ${activeMonth?.month === month.month ? 'active' : ''}" data-annual-month="${month.month}">
+    <td>${month.month + 1}月</td><td>${escapeHtml(fmtDateJP(month.range.start))}<br>${escapeHtml(fmtDateJP(month.range.end))}</td>
+    <td>${qtyLabel(month.totals.qty)}</td><td>${qtyLabel(month.selfQty)}</td><td>${qtyLabel(month.subcontractQty)}</td>
+    <td class="right">${yenPlain(month.totals.labor, hidden)}</td><td class="right">${yenPlain(month.totals.overtime, hidden)}</td><td class="right">${yenPlain(month.totals.expenseTotal, hidden)}</td><td class="right">${yenPlain(month.totals.tax, hidden)}</td><td class="right strong">${yenPlain(month.totals.total, hidden)}</td><td class="right">${yenPlain(month.subcontractPay, hidden)}</td><td class="right">${yenPlain(month.subcontractDiff, hidden)}</td>
+  </tr>`).join('');
+  const cards = months.map((month) => `<button class="annual-month-card ${activeMonth?.month === month.month ? 'active' : ''}" type="button" data-annual-month="${month.month}">
+    <span class="annual-month-card-head"><strong>${month.month + 1}月締め分</strong><small>${escapeHtml(fmtDateJP(month.range.start))}〜${escapeHtml(fmtDateJP(month.range.end))}</small></span>
+    <span class="annual-month-card-grid"><span>総人工 <b>${qtyLabel(month.totals.qty)}</b></span><span>自分 / 外注 <b>${qtyLabel(month.selfQty)} / ${qtyLabel(month.subcontractQty)}</b></span><span>請求合計 <b>${yen(month.totals.total, hidden)}</b></span><span>外注支払 / 差額 <b>${yen(month.subcontractPay, hidden)} / ${yen(month.subcontractDiff, hidden)}</b></span></span>
+  </button>`).join('');
+  return `<div class="annual-summary-grid">
+      <div class="annual-stat"><span>年間請求</span><strong>${yen(total.total, hidden)}</strong></div>
+      <div class="annual-stat"><span>総人工</span><strong>${qtyLabel(total.qty)}</strong><small>自分 ${qtyLabel(total.selfQty)} / 外注 ${qtyLabel(total.subcontractQty)}</small></div>
+      <div class="annual-stat"><span>外注支払</span><strong>${yen(total.subcontractPay, hidden)}</strong></div>
+      <div class="annual-stat"><span>外注差額</span><strong>${yen(total.subcontractDiff, hidden)}</strong></div>
+    </div>
+    <div class="annual-table-wrap"><table class="annual-table"><thead><tr><th>月</th><th>対象期間</th><th>総人工</th><th>自分</th><th>外注</th><th>人工売上</th><th>残業</th><th>経費</th><th>消費税</th><th>請求合計</th><th>外注支払</th><th>外注差額</th></tr></thead><tbody>${desktopRows}</tbody><tfoot><tr><th colspan="2">年間合計</th><th>${qtyLabel(total.qty)}</th><th>${qtyLabel(total.selfQty)}</th><th>${qtyLabel(total.subcontractQty)}</th><th class="right">${yenPlain(total.labor, hidden)}</th><th class="right">${yenPlain(total.overtime, hidden)}</th><th class="right">${yenPlain(total.expenses, hidden)}</th><th class="right">${yenPlain(total.tax, hidden)}</th><th class="right">${yenPlain(total.total, hidden)}</th><th class="right">${yenPlain(total.subcontractPay, hidden)}</th><th class="right">${yenPlain(total.subcontractDiff, hidden)}</th></tr></tfoot></table></div>
+    <div class="annual-month-list">${cards}</div>
+    ${activeMonth ? `<section class="annual-detail"><div class="annual-detail-head"><div><strong>${activeMonth.month + 1}月締め分の明細</strong><span>${escapeHtml(companyBillingPeriodLabel(company, new Date(year, activeMonth.month, 1)))}</span></div><button type="button" data-annual-month="${activeMonth.month}" aria-label="明細を閉じる">×</button></div>${annualMonthDetailHtml(activeMonth, hidden)}</section>` : ''}`;
+}
 function renderInvoiceScreen() {
   const tabs = document.getElementById('co-tabs');
   const body = document.getElementById('inv-body');
+  document.querySelectorAll('[data-invoice-view]').forEach((button) => button.classList.toggle('active', button.dataset.invoiceView === invoiceViewMode));
   const companies = pickSelectedCompany();
-  if (!companies.length) { tabs.innerHTML = ''; body.innerHTML = `<div class="empty"><div class="icon">🧾</div><div>この月の請求対象はまだありません</div><p>自分または外注の予定を入力するとここに会社別帳票が出ます。</p></div>`; return; }
-  tabs.innerHTML = companies.map((company) => `<button class="co-chip ${company === selectedCompany ? 'active' : ''}" data-company="${escapeHtml(company)}">${escapeHtml(company)}</button>`).join('');
+  if (!companies.length) { tabs.innerHTML = ''; body.innerHTML = `<div class="empty"><div>この${invoiceViewMode === 'annual' ? '年' : '月'}の請求対象はまだありません</div><p>自分または外注の予定を入力すると会社別に表示されます。</p></div>`; return; }
+  tabs.innerHTML = companies.map((company) => `<button class="co-chip ${company === selectedCompany ? 'active' : ''}" data-company="${escapeHtml(company)}">${escapeHtml(companySheetName(company))}</button>`).join('');
+  const hidden = !state.settings.showSales;
+  if (invoiceViewMode === 'annual') {
+    body.innerHTML = renderAnnualTransactions(selectedCompany, hidden);
+    return;
+  }
   const entries = entriesForInvoiceCompany();
   const totals = invoiceTotals(entries);
-  const hidden = !state.settings.showSales;
   const invoiceFontSize = fontSizeLevel(state.settings.invoiceFontSize);
   body.innerHTML = `<div class="invoice-tool-row"><span class="billing-period-label">${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</span><label>請求書フォント<select id="invoice-font-size-select">${fontSizeOptions(invoiceFontSize)}</select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
-}
-function expenseTotals(entries) {
-  return expenseItems().map((item) => ({
-    ...item,
-    total: entries.reduce((sum, entry) => sum + num(entry.expenses?.[item.id]), 0),
-  })).filter((item) => item.total > 0);
-}
-function renderExpenseRows(title, rows) {
-  if (!rows.length) return `<div class="expense-group"><div class="expense-group-title">${escapeHtml(title)}</div><div class="expense-empty">経費入力なし</div></div>`;
-  return `<div class="expense-group"><div class="expense-group-title">${escapeHtml(title)}</div>${rows.map((row) => `<div class="expense-row"><span>${escapeHtml(row.label)}</span><strong>${yen(row.total, !state.settings.showSales)}</strong></div>`).join('')}</div>`;
-}
-function receiptTargetOptions(receipt) {
-  const entries = receipt.date ? sortEntriesForCalendarDisplay(dayEntries(receipt.date)) : [];
-  if (!entries.length) return '<option value="">同じ日付の予定なし</option>';
-  const selectedId = entries.some((entry) => entry.id === receipt.targetEntryId)
-    ? receipt.targetEntryId
-    : (entries.some((entry) => entry.id === receipt.appliedEntryId) ? receipt.appliedEntryId : entries[0].id);
-  return entries.map((entry) => {
-    const worker = entry.type === 'sub' ? ` / ${entry.workerName || '外注'}` : '';
-    const label = `${shiftLabel(entry.shift)} / ${entry.company || '会社未入力'} / ${entry.site || '現場未入力'}${worker}`;
-    return `<option value="${escapeHtml(entry.id)}" ${entry.id === selectedId ? 'selected' : ''}>${escapeHtml(label)}</option>`;
-  }).join('');
-}
-function receiptCardHtml(receipt) {
-  const thumbnail = receipt.imageData ? `<img class="receipt-thumb" src="${receipt.imageData}" alt="領収書写真">` : '<div class="receipt-thumb empty">写真なし</div>';
-  const ocrText = receipt.ocrText ? `<details class="receipt-ocr"><summary>OCR文字</summary><pre>${escapeHtml(receipt.ocrText.slice(0, 900))}</pre></details>` : '';
-  return `<div class="receipt-card">
-    <div class="receipt-main">
-      ${thumbnail}
-      <div class="receipt-main-text">
-        <div class="receipt-name">${escapeHtml(receipt.vendor || receipt.fileName || '領収書')}</div>
-        <div class="receipt-meta">${escapeHtml(receipt.status || '未確認')} ・ ${escapeHtml((receipt.importedAt || '').slice(0, 10))}</div>
-      </div>
-    </div>
-    <div class="receipt-fields">
-      <input class="receipt-date" type="date" data-receipt-date="${receipt.id}" value="${escapeHtml(receipt.date || '')}">
-      <input class="receipt-amount" type="number" inputmode="numeric" min="0" step="1" data-receipt-amount="${receipt.id}" value="${num(receipt.amount) || ''}" placeholder="金額">
-    </div>
-    <select class="receipt-select" data-receipt-category="${receipt.id}" aria-label="経費項目">${expenseItems().map((item) => `<option value="${escapeHtml(item.label)}" ${item.label === receipt.category ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select>
-    <select class="receipt-select" data-receipt-entry="${receipt.id}" aria-label="入力先の予定">${receiptTargetOptions(receipt)}</select>
-    ${ocrText}
-    <div class="receipt-actions">
-      <button class="btn-secondary receipt-apply" type="button" data-apply-receipt="${receipt.id}">${receipt.appliedEntryId ? '入力内容を更新' : '予定へ入力'}</button>
-      <button class="btn-secondary receipt-retry" type="button" data-ocr-retry="${receipt.id}">再読み取り</button>
-    </div>
-    <button class="receipt-del" type="button" data-del-receipt="${receipt.id}">×</button>
-  </div>`;
 }
 function syncStatusText() {
   const pending = loadSyncPending();
@@ -1467,20 +1500,6 @@ function renderSyncScreen() {
   const driveStatus = document.getElementById('drive-sync-status'); if (driveStatus) driveStatus.textContent = syncStatusText();
   const pending = loadSyncPending();
   const log = document.getElementById('sync-log'); if (log && !log.textContent) log.textContent = pending.pending ? '未送信の変更があります。オンライン復帰後に自動送信します' : '初回だけGoogleログインすると、以後は起動時取得・保存時送信を自動で試します';
-}
-function renderReceiptScreen() {
-  const sub = document.getElementById('receipt-sub'); if (sub) sub.textContent = `${state.receipts?.length || 0}件`;
-  const monthExpenses = expenseTotals(monthEntries());
-  const yearExpenses = expenseTotals(yearEntries());
-  const monthExpenseTotal = monthExpenses.reduce((sum, item) => sum + item.total, 0);
-  const yearExpenseTotal = yearExpenses.reduce((sum, item) => sum + item.total, 0);
-  const expenseTotal = document.getElementById('receipt-expense-total'); if (expenseTotal) expenseTotal.textContent = `今月 ${yen(monthExpenseTotal, !state.settings.showSales)}`;
-  const summary = document.getElementById('receipt-expense-summary-body');
-  if (summary) summary.innerHTML = `<div class="expense-summary">${renderExpenseRows('今月', monthExpenses)}${renderExpenseRows(`${cursor.getFullYear()}年`, yearExpenses)}</div><div class="expense-year-total">年間合計 <strong>${yen(yearExpenseTotal, !state.settings.showSales)}</strong></div>`;
-  const body = document.getElementById('receipt-body'); if (!body) return;
-  const receipts = state.receipts || [];
-  if (!receipts.length) { body.innerHTML = '<div class="empty"><div>領収書はまだありません</div></div>'; return; }
-  body.innerHTML = '<div class="receipt-list">' + receipts.map(receiptCardHtml).join('') + '</div>';
 }
 function renderSettings() {
   const s = state.settings;
@@ -1744,11 +1763,10 @@ function saveGoogleSettings({ feedback = true, render = true, touch = true } = {
 function setSyncLog(message) { const log = document.getElementById('sync-log'); if (log) log.textContent = message; }
 function firebaseAvailable() { return !!window.NinqFirebaseCloud; }
 function mergeFirebaseState(remotePayload) {
-  const merged = mergeDriveState(remotePayload);
-  return preserveLocalReceiptImages(merged);
+  return mergeDriveState(remotePayload);
 }
 function applyRemoteFirebaseState(remotePayload) {
-  state = preserveLocalReceiptImages(normalizeState(remotePayload.state || remotePayload));
+  state = normalizeState(remotePayload.state || remotePayload);
   saveState();
   rememberDriveSync(remotePayload);
   saveSyncPending(false);
@@ -1954,7 +1972,8 @@ function localModifiedAt(targetState = state) {
   const dates = [
     targetState.settings?.updatedAt,
     ...(targetState.entries || []).flatMap((entry) => [entry.updatedAt, entry.createdAt]),
-    ...(targetState.receipts || []).flatMap((receipt) => [receipt.updatedAt, receipt.importedAt]),
+    ...Object.values(targetState.deletedEntryIds || {}),
+    ...Object.values(targetState.deletedReceiptIds || {}),
   ].filter(Boolean).map((value) => Date.parse(value)).filter(Number.isFinite);
   return dates.length ? new Date(Math.max(...dates)).toISOString() : new Date(0).toISOString();
 }
@@ -1965,15 +1984,7 @@ function firebaseSyncPayload() {
   const payload = syncPayload();
   payload.appVersion = APP_VERSION;
   payload.backend = 'firebase';
-  payload.state.receipts = (payload.state.receipts || []).map((receipt) => ({ ...receipt, imageData: '' }));
   return payload;
-}
-function preserveLocalReceiptImages(nextState) {
-  const imageById = new Map((state.receipts || []).filter((receipt) => receipt.imageData).map((receipt) => [receipt.id, receipt.imageData]));
-  nextState.receipts = (nextState.receipts || []).map((receipt) => (
-    !receipt.imageData && imageById.has(receipt.id) ? { ...receipt, imageData: imageById.get(receipt.id) } : receipt
-  ));
-  return nextState;
 }
 function remotePayloadModifiedAt(payload) {
   if (payload?.modifiedAt) return payload.modifiedAt;
@@ -2151,7 +2162,7 @@ function mergeDriveState(remotePayload) {
   return normalizeState({
     settings: mergeSettingsBySection(state.settings, remoteState.settings),
     entries: mergeEntriesWithDeletes(state.entries, remoteState.entries, state.deletedEntryIds, remoteState.deletedEntryIds),
-    receipts: mergeItemsWithDeletes(state.receipts || [], remoteState.receipts || [], state.deletedReceiptIds, remoteState.deletedReceiptIds, ['updatedAt', 'importedAt']),
+    receipts: [],
     deletedEntryIds,
     deletedReceiptIds,
   });
@@ -2638,269 +2649,6 @@ function importBackupJson(file) {
   };
   reader.readAsText(file, 'utf-8');
 }
-function guessReceiptDate(name) {
-  const text = String(name || '');
-  const ymd = text.match(/(20\d{2})[-_.年]?(\d{1,2})[-_.月]?(\d{1,2})/);
-  if (ymd) return `${ymd[1]}-${String(Number(ymd[2])).padStart(2, '0')}-${String(Number(ymd[3])).padStart(2, '0')}`;
-  const md = text.match(/(?:^|[^\d])(\d{1,2})[-_.月](\d{1,2})(?:日|[^\d]|$)/);
-  if (md) return `${cursor.getFullYear()}-${String(Number(md[1])).padStart(2, '0')}-${String(Number(md[2])).padStart(2, '0')}`;
-  return '';
-}
-function guessReceiptAmount(name) {
-  const match = String(name || '').match(/(?:¥|円|amount|amt)?\s*(\d{3,6})(?:円|yen)?/i);
-  return match ? num(match[1]) : 0;
-}
-function normalizeOcrText(text) {
-  return String(text || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
-}
-function guessReceiptVendorFromText(text, fallback = '') {
-  const skip = /領収|レシート|receipt|合計|小計|税|tel|電話|登録番号|インボイス|支払|現計|釣銭|お預|クレジット|visa|master|http|www/i;
-  const line = normalizeOcrText(text).split(/\r?\n/).map((item) => item.trim()).find((item) => item.length >= 2 && item.length <= 28 && !skip.test(item) && !/\d{2,}/.test(item));
-  return line || fallback.replace(/\.[^.]+$/, '').slice(0, 24);
-}
-function guessReceiptDateFromText(text) {
-  const source = normalizeOcrText(text);
-  const ymd = source.match(/(20\d{2}|令和\s*\d{1,2}|R\s*\d{1,2})\s*[年\/.\-]\s*(\d{1,2})\s*[月\/.\-]\s*(\d{1,2})/i);
-  if (ymd) {
-    const yearText = ymd[1].replace(/\s/g, '');
-    const year = /^20/.test(yearText) ? Number(yearText) : 2018 + Number(yearText.replace(/令和|R/i, ''));
-    return `${year}-${String(Number(ymd[2])).padStart(2, '0')}-${String(Number(ymd[3])).padStart(2, '0')}`;
-  }
-  const md = source.match(/(?:^|[^\d])(\d{1,2})\s*[月\/.\-]\s*(\d{1,2})\s*日?/);
-  if (md) return `${cursor.getFullYear()}-${String(Number(md[1])).padStart(2, '0')}-${String(Number(md[2])).padStart(2, '0')}`;
-  return '';
-}
-function numbersFromText(text) {
-  return [...String(text || '').matchAll(/(?:¥|￥)?\s*([0-9０-９][0-9０-９,，.．]{1,10})\s*(?:円)?/g)]
-    .map((match) => Number(match[1].replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xFEE0)).replace(/[,.，．]/g, '')))
-    .filter((value) => Number.isFinite(value) && value >= 10 && value <= 9999999);
-}
-function guessReceiptAmountFromText(text) {
-  const lines = normalizeOcrText(text).split(/\r?\n/);
-  const strong = lines.filter((line) => /合計|総合計|請求|領収|お買上|現計|税込|計\s*$/.test(line)).flatMap(numbersFromText);
-  if (strong.length) return Math.max(...strong);
-  const all = lines.flatMap(numbersFromText).filter((value) => value < 1000000);
-  return all.length ? Math.max(...all) : 0;
-}
-function receiptPatchFromOcr(text, fileName) {
-  const ocrText = normalizeOcrText(text);
-  return {
-    ocrText,
-    vendor: guessReceiptVendorFromText(ocrText, fileName),
-    date: guessReceiptDateFromText(ocrText) || guessReceiptDate(fileName),
-    amount: guessReceiptAmountFromText(ocrText) || guessReceiptAmount(fileName),
-    category: guessReceiptCategory(`${fileName} ${ocrText}`),
-    status: 'OCR候補',
-  };
-}
-function withTimeout(promise, ms, message) {
-  let timer;
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => { timer = window.setTimeout(() => reject(new Error(message)), ms); }),
-  ]).finally(() => window.clearTimeout(timer));
-}
-function loadTesseract() {
-  if (window.Tesseract) return Promise.resolve(window.Tesseract);
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector('script[data-tesseract]');
-    if (existing) { existing.addEventListener('load', () => resolve(window.Tesseract), { once: true }); existing.addEventListener('error', reject, { once: true }); return; }
-    const script = document.createElement('script');
-    script.src = TESSERACT_URL;
-    script.async = true;
-    script.dataset.tesseract = 'true';
-    script.onload = () => window.Tesseract ? resolve(window.Tesseract) : reject(new Error('OCRライブラリの起動に失敗しました'));
-    script.onerror = () => reject(new Error('OCRライブラリを読み込めませんでした'));
-    document.head.appendChild(script);
-  });
-}
-function loadImageElement(source) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const isBlob = source instanceof Blob;
-    const url = isBlob ? URL.createObjectURL(source) : String(source || '');
-    img.onload = () => {
-      if (isBlob) URL.revokeObjectURL(url);
-      resolve(img);
-    };
-    img.onerror = () => { if (isBlob) URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
-    img.src = url;
-  });
-}
-async function createCompressedImageData(file, maxWidth = 900, quality = 0.62) {
-  const img = await loadImageElement(file);
-  const scale = Math.min(1, maxWidth / img.width);
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(img.width * scale));
-  canvas.height = Math.max(1, Math.round(img.height * scale));
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', quality);
-}
-async function createReceiptImageData(file) {
-  return createCompressedImageData(file, 900, 0.62);
-}
-async function preprocessReceiptImage(source) {
-  const img = await loadImageElement(source);
-  const maxWidth = 1500;
-  const scale = Math.min(1, maxWidth / img.width);
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(img.width * scale));
-  canvas.height = Math.max(1, Math.round(img.height * scale));
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  for (let i = 0; i < image.data.length; i += 4) {
-    const gray = (image.data[i] * 0.299) + (image.data[i + 1] * 0.587) + (image.data[i + 2] * 0.114);
-    const value = Math.max(0, Math.min(255, ((gray - 128) * 1.35) + 128));
-    image.data[i] = value; image.data[i + 1] = value; image.data[i + 2] = value;
-  }
-  ctx.putImageData(image, 0, 0);
-  return canvas;
-}
-function receiptOcrOptions(receiptId) {
-  let lastPct = -1;
-  return {
-    workerPath: TESSERACT_WORKER_URL,
-    corePath: TESSERACT_CORE_URL,
-    langPath: TESSERACT_LANG_URL,
-    logger: (progress) => {
-      const pct = Math.round((progress.progress || 0) * 100);
-      if (progress.status === 'recognizing text' && pct >= lastPct + 10) {
-        lastPct = pct;
-        updateReceiptField(receiptId, { status: `OCR ${pct}%` });
-        renderReceiptScreen();
-      } else if (progress.status && pct === 0 && lastPct < 0) {
-        updateReceiptField(receiptId, { status: `OCR準備中` });
-        renderReceiptScreen();
-      }
-    },
-  };
-}
-async function recognizeReceiptImage(Tesseract, image, receiptId) {
-  try {
-    return await withTimeout(Tesseract.recognize(image, 'jpn+eng', receiptOcrOptions(receiptId)), RECEIPT_OCR_TIMEOUT_MS, 'OCRが時間切れになりました');
-  } catch (error) {
-    updateReceiptField(receiptId, { status: '日本語OCR失敗、英数字で再試行' });
-    renderReceiptScreen();
-    return withTimeout(Tesseract.recognize(image, 'eng', receiptOcrOptions(receiptId)), RECEIPT_OCR_TIMEOUT_MS, error.message || 'OCR失敗');
-  }
-}
-async function runReceiptOcr(receiptId, source, fileName = '') {
-  if (!source) { updateReceiptField(receiptId, { status: '画像がありません' }); renderReceiptScreen(); return; }
-  if (source instanceof File && !(source.type || '').startsWith('image/')) { updateReceiptField(receiptId, { status: 'OCR対象外（画像のみ）' }); renderReceiptScreen(); return; }
-  try {
-    updateReceiptField(receiptId, { status: 'OCR画像調整中' });
-    renderReceiptScreen();
-    const Tesseract = await loadTesseract();
-    const image = await preprocessReceiptImage(source);
-    const result = await recognizeReceiptImage(Tesseract, image, receiptId);
-    updateReceiptField(receiptId, receiptPatchFromOcr(result.data?.text || '', fileName));
-  } catch (error) {
-    updateReceiptField(receiptId, { status: `${error.message || 'OCR失敗'}・手入力してください` });
-  }
-  renderReceiptScreen();
-  scheduleDriveAutoSync({ message: '領収書OCR候補を保存しました' });
-}
-async function runReceiptImportQueue(receipts, files) {
-  for (let index = 0; index < receipts.length; index += 1) {
-    const file = files[index];
-    try {
-      if ((file.type || '').startsWith('image/')) {
-        updateReceiptField(receipts[index].id, { status: '写真を保存中' });
-        renderReceiptScreen();
-        const imageData = await createReceiptImageData(file);
-        updateReceiptField(receipts[index].id, { imageData, status: 'OCR待機中' });
-        renderReceiptScreen();
-        await runReceiptOcr(receipts[index].id, imageData, file.name);
-      } else {
-        updateReceiptField(receipts[index].id, { status: 'OCR対象外（画像のみ）' });
-        renderReceiptScreen();
-      }
-    } catch (error) {
-      updateReceiptField(receipts[index].id, { status: `${error.message || '読み込み失敗'}・手入力してください` });
-      renderReceiptScreen();
-    }
-  }
-}
-function retryReceiptOcr(id) {
-  const receipt = (state.receipts || []).find((item) => item.id === id);
-  if (!receipt) return;
-  if (!receipt.imageData) { alert('再読み取り用の写真がありません。もう一度カメラで撮ってください'); return; }
-  runReceiptOcr(receipt.id, receipt.imageData, receipt.fileName || '領収書');
-}
-function updateReceiptField(id, patch) {
-  const item = (state.receipts || []).find((receipt) => receipt.id === id);
-  if (!item) return;
-  if (patch.date !== undefined && patch.date !== item.date) patch.targetEntryId = '';
-  Object.assign(item, patch, { status: patch.status || item.status, updatedAt: new Date().toISOString() });
-  if (state.deletedReceiptIds) delete state.deletedReceiptIds[id];
-  saveState();
-  scheduleDriveAutoSync({ delay: 1800 });
-}
-function removeReceiptApplication(receipt) {
-  if (!receipt?.appliedEntryId) return;
-  const entry = state.entries.find((item) => item.id === receipt.appliedEntryId);
-  if (!entry) return;
-  const fallbackExpense = expenseItems().find((item) => item.label === receipt.category);
-  const expenseId = receipt.appliedExpenseId || fallbackExpense?.id;
-  const amount = receipt.appliedAmount || num(receipt.amount);
-  if (!expenseId || !amount) return;
-  entry.expenses = { ...(entry.expenses || {}) };
-  entry.expenses[expenseId] = Math.max(0, num(entry.expenses[expenseId]) - amount);
-  entry.updatedAt = new Date().toISOString();
-}
-function applyReceiptToEntry(id) {
-  const receipt = (state.receipts || []).find((item) => item.id === id);
-  if (!receipt) return;
-  if (!receipt.date) { alert('領収書の日付を入れてください'); return; }
-  if (!num(receipt.amount)) { alert('領収書の金額を入れてください'); return; }
-  const candidates = sortEntriesForCalendarDisplay(dayEntries(receipt.date));
-  const entry = candidates.find((item) => item.id === receipt.targetEntryId)
-    || candidates.find((item) => item.id === receipt.appliedEntryId)
-    || candidates[0];
-  if (!entry) { alert('同じ日付の予定がありません'); return; }
-  const expense = expenseItems().find((item) => item.label === receipt.category) || expenseItems()[0];
-  if (!expense) return;
-  removeReceiptApplication(receipt);
-  entry.expenses = { ...(entry.expenses || {}) };
-  entry.expenses[expense.id] = num(entry.expenses[expense.id]) + num(receipt.amount);
-  entry.updatedAt = new Date().toISOString();
-  receipt.status = '予定へ入力済み';
-  receipt.targetEntryId = entry.id;
-  receipt.appliedEntryId = entry.id;
-  receipt.appliedExpenseId = expense.id;
-  receipt.appliedAmount = num(receipt.amount);
-  receipt.updatedAt = new Date().toISOString();
-  saveState();
-  renderAll();
-  scheduleDriveAutoSync();
-  showSaveFeedback('領収書を予定へ入力しました');
-}
-function deleteReceipt(id) {
-  const receipt = (state.receipts || []).find((item) => item.id === id);
-  if (!receipt || !confirm('この領収書を削除しますか？')) return;
-  removeReceiptApplication(receipt);
-  const now = new Date().toISOString();
-  state.receipts = (state.receipts || []).filter((item) => item.id !== id);
-  state.deletedReceiptIds = { ...(state.deletedReceiptIds || {}), [id]: now };
-  saveState();
-  renderAll();
-  scheduleDriveAutoSync({ message: '領収書の削除をクラウドへ保存します...' });
-}
-function handleReceiptFiles(files) {
-  const list = Array.from(files || []);
-  if (!list.length) return;
-  const now = new Date().toISOString();
-  const receipts = list.map((file) => normalizeReceipt({ fileName: file.name, importedAt: now, category: guessReceiptCategory(file.name), date: guessReceiptDate(file.name), amount: guessReceiptAmount(file.name), status: (file.type || '').startsWith('image/') ? '写真準備中' : 'OCR対象外（画像のみ）' }));
-  state.receipts = [...(state.receipts || []), ...receipts];
-  saveState(); renderReceiptScreen(); scheduleDriveAutoSync({ message: '領収書をクラウドへ保存します...' });
-  runReceiptImportQueue(receipts, list);
-}
 function persistSettingsFromForm({ render = false, feedback = '', sections = [] } = {}) {
   const linesToObjects = (text, previous) => text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((label, index) => ({ id: previous[index]?.id || `exp${index + 1}`, label }));
   const companyRates = companyPresetValues();
@@ -3092,8 +2840,10 @@ function bindEvents() {
   document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => { if (activeScreen === 'st') flushSettingsAutosave(); activeScreen = button.dataset.screen; renderAll(); }));
   const salesToggle = document.getElementById('toggle-sales-btn');
   if (salesToggle) salesToggle.addEventListener('click', () => { state.settings.showSales = !state.settings.showSales; markSettingsSections('display'); saveState(); renderAll(); scheduleDriveAutoSync({ message: '表示設定をクラウドへ保存します...' }); });
-  ['prev-month-btn', 'sub-prev-month-btn', 'inv-prev-month-btn'].forEach((id) => document.getElementById(id).addEventListener('click', () => { cursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1); if (monthKey(selectedDate) !== monthKey(cursor)) selectedDate = toYmd(cursor); renderAll(); }));
-  ['next-month-btn', 'sub-next-month-btn', 'inv-next-month-btn'].forEach((id) => document.getElementById(id).addEventListener('click', () => { cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1); if (monthKey(selectedDate) !== monthKey(cursor)) selectedDate = toYmd(cursor); renderAll(); }));
+  ['prev-month-btn', 'sub-prev-month-btn'].forEach((id) => document.getElementById(id).addEventListener('click', () => { cursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1); if (monthKey(selectedDate) !== monthKey(cursor)) selectedDate = toYmd(cursor); renderAll(); }));
+  ['next-month-btn', 'sub-next-month-btn'].forEach((id) => document.getElementById(id).addEventListener('click', () => { cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1); if (monthKey(selectedDate) !== monthKey(cursor)) selectedDate = toYmd(cursor); renderAll(); }));
+  document.getElementById('inv-prev-month-btn')?.addEventListener('click', () => { cursor = invoiceViewMode === 'annual' ? new Date(cursor.getFullYear() - 1, cursor.getMonth(), 1) : new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1); expandedAnnualMonth = ''; renderAll(); });
+  document.getElementById('inv-next-month-btn')?.addEventListener('click', () => { cursor = invoiceViewMode === 'annual' ? new Date(cursor.getFullYear() + 1, cursor.getMonth(), 1) : new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1); expandedAnnualMonth = ''; renderAll(); });
   document.getElementById('fab-main').addEventListener('click', () => { closeDayModal(); openModal('self'); });
   document.getElementById('open-sheet-btn')?.addEventListener('click', openSheetPage);
   document.getElementById('fab-sub').addEventListener('click', () => { if (!subcontractEnabled()) return; closeDayModal(); openModal('sub'); });
@@ -3122,10 +2872,6 @@ function bindEvents() {
   document.getElementById('backup-export-btn')?.addEventListener('click', exportBackupJson);
   document.getElementById('backup-import-btn')?.addEventListener('click', () => document.getElementById('backup-file')?.click());
   document.getElementById('backup-file')?.addEventListener('change', (event) => { importBackupJson(event.target.files?.[0]); event.target.value = ''; });
-  document.getElementById('receipt-camera-btn')?.addEventListener('click', () => document.getElementById('receipt-camera')?.click());
-  document.getElementById('receipt-camera')?.addEventListener('change', (event) => { handleReceiptFiles(event.target.files); event.target.value = ''; });
-  document.getElementById('receipt-pick-btn')?.addEventListener('click', () => document.getElementById('receipt-file')?.click());
-  document.getElementById('receipt-file')?.addEventListener('change', (event) => { handleReceiptFiles(event.target.files); event.target.value = ''; });
   document.getElementById('stamp-pick-btn')?.addEventListener('click', () => document.getElementById('st-stamp-file')?.click());
   document.getElementById('st-stamp-file')?.addEventListener('change', (event) => { handleStampFile(event.target.files?.[0]); event.target.value = ''; });
   document.getElementById('stamp-clear-btn')?.addEventListener('click', clearStampImage);
@@ -3183,6 +2929,10 @@ function bindEvents() {
     if (screenLink) { if (activeScreen === 'st') flushSettingsAutosave(); activeScreen = screenLink.dataset.screenLink; if (activeScreen !== 'cal') closeDayModal(); renderAll(); return; }
     const otherSales = event.target.closest('[data-sales-toggle]');
     if (otherSales) { state.settings.showSales = !state.settings.showSales; markSettingsSections('display'); saveState(); renderAll(); scheduleDriveAutoSync({ message: '表示設定をクラウドへ保存します...' }); return; }
+    const invoiceView = event.target.closest('[data-invoice-view]');
+    if (invoiceView) { invoiceViewMode = invoiceView.dataset.invoiceView === 'annual' ? 'annual' : 'monthly'; expandedAnnualMonth = ''; renderAll(); return; }
+    const annualMonth = event.target.closest('[data-annual-month]');
+    if (annualMonth) { expandedAnnualMonth = expandedAnnualMonth === annualMonth.dataset.annualMonth ? '' : annualMonth.dataset.annualMonth; renderInvoiceScreen(); return; }
     const dayButton = event.target.closest('.cal-day');
     if (dayButton) { openDayModal(dayButton.dataset.date); return; }
     const addDate = event.target.closest('[data-add-date]');
@@ -3191,13 +2941,7 @@ function bindEvents() {
     const delButton = event.target.closest('[data-del-entry]'); if (delButton) { if (confirm('この予定を削除しますか？')) deleteEntry(delButton.dataset.delEntry); return; }
     const companySelect = event.target.closest('#f-company-select');
     if (companySelect) { const input = document.getElementById('f-company'); if (input && companySelect.value) { input.value = companySheetName(companySelect.value); applyCompanyRate(companySelect.value); updateSubcontractDiff(); } return; }
-    const applyReceipt = event.target.closest('[data-apply-receipt]');
-    if (applyReceipt) { applyReceiptToEntry(applyReceipt.dataset.applyReceipt); return; }
-    const retryReceipt = event.target.closest('[data-ocr-retry]');
-    if (retryReceipt) { retryReceiptOcr(retryReceipt.dataset.ocrRetry); return; }
-    const delReceipt = event.target.closest('[data-del-receipt]');
-    if (delReceipt) { deleteReceipt(delReceipt.dataset.delReceipt); return; }
-    const companyChip = event.target.closest('[data-company]'); if (companyChip) { selectedCompany = companyChip.dataset.company; renderInvoiceScreen(); return; }
+    const companyChip = event.target.closest('[data-company]'); if (companyChip) { selectedCompany = companyChip.dataset.company; expandedAnnualMonth = ''; renderInvoiceScreen(); return; }
     if (event.target.matches('#cancel-entry-btn')) { closeModal(); return; }
     if (event.target.matches('[data-export-demen]')) exportDemenCsv();
     if (event.target.matches('[data-export-invoice]')) exportInvoiceCsv();
@@ -3303,10 +3047,6 @@ function bindEvents() {
     if (event.target.matches('#st-ui-size,#st-font-choice')) { scheduleSettingsAutosave({ immediate: true, section: 'display' }); return; }
     if (event.target.matches('[data-range-exclude]')) { event.target.closest('.range-exclude-chip')?.classList.toggle('checked', event.target.checked); return; }
     if (event.target.id === 'f-company-select') { const input = document.getElementById('f-company'); if (input && event.target.value) { input.value = companySheetName(event.target.value); applyCompanyRate(event.target.value); updateSubcontractDiff(); } return; }
-    if (event.target.matches('[data-receipt-category]')) { updateReceiptField(event.target.dataset.receiptCategory, { category: event.target.value, status: '確認済み' }); renderAll(); return; }
-    if (event.target.matches('[data-receipt-entry]')) { updateReceiptField(event.target.dataset.receiptEntry, { targetEntryId: event.target.value, status: '確認済み' }); return; }
-    if (event.target.matches('[data-receipt-date]')) { updateReceiptField(event.target.dataset.receiptDate, { date: event.target.value, status: '確認済み' }); renderAll(); return; }
-    if (event.target.matches('[data-receipt-amount]')) { updateReceiptField(event.target.dataset.receiptAmount, { amount: num(event.target.value), status: '確認済み' }); return; }
     if (event.target.id === 'f-company') {
       const select = document.getElementById('f-company-select');
       const preset = companyPresetByAnyName(event.target.value);

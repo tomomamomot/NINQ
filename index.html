@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json?v=35">
 <link rel="icon" href="icon-192.png?v=34">
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=34">
-  <link rel="stylesheet" href="styles.css?v=84">
+  <link rel="stylesheet" href="styles.css?v=85">
 </head>
 <body>
 <div id="sc-cal" class="screen active">
@@ -30,7 +30,6 @@
       <button class="top-menu-item" data-screen-link="cal">カレンダー</button>
       <button class="top-menu-item" data-screen-link="inv">請求書、出面表</button>
       <button class="top-menu-item" data-screen-link="sync">NINQクラウド</button>
-      <button class="top-menu-item" data-screen-link="receipt">経費</button>
       <button class="top-menu-item" data-screen-link="sub">外注</button>
       <button class="top-menu-item" data-screen-link="st">設定</button>
       <button class="top-menu-item" id="toggle-sales-btn">売上表示</button>
@@ -87,6 +86,10 @@
     <button id="inv-prev-month-btn">&#8249;</button>
     <span class="month-label" id="inv-mnav"></span>
     <button id="inv-next-month-btn">&#8250;</button>
+  </div>
+  <div class="invoice-view-switch" role="group" aria-label="帳票表示">
+    <button class="active" type="button" data-invoice-view="monthly">月次帳票</button>
+    <button type="button" data-invoice-view="annual">年間取引</button>
   </div>
   <div class="co-tabs" id="co-tabs"></div>
   <div id="inv-body"></div>
@@ -265,46 +268,10 @@
   </div>
 </div>
 
-<div id="sc-receipt" class="screen">
-  <div class="topbar">
-    <div class="topbar-row">
-      <div>
-        <div class="topbar-title">経費</div>
-        <div class="topbar-sub" id="receipt-sub">自動仕分け</div>
-      </div>
-      <div class="topbar-actions">
-        <button class="ghost-icon-btn" data-menu-open aria-label="メニュー">&#9776;</button>
-      </div>
-    </div>
-    <div class="top-menu hidden top-menu-clone"></div>
-  </div>
-  <div class="receipt-import">
-    <input id="receipt-camera" type="file" accept="image/*" capture="environment" hidden>
-    <input id="receipt-file" type="file" accept="image/*,.pdf" multiple hidden>
-    <div class="receipt-import-actions">
-      <button class="btn-primary" type="button" id="receipt-camera-btn">カメラで撮る</button>
-      <button class="btn-secondary" type="button" id="receipt-pick-btn">写真から選ぶ</button>
-    </div>
-    <div class="receipt-import-note">撮影後に日付・金額・経費区分を読み取り、確認して予定へ入力できます。</div>
-  </div>
-  <div class="receipt-summary">
-    <div class="sync-section-head">
-      <div>
-        <div class="sync-section-title">経費別集計</div>
-        <div class="sync-section-sub">今月と今年</div>
-      </div>
-      <span id="receipt-expense-total">¥0</span>
-    </div>
-    <div id="receipt-expense-summary-body"></div>
-  </div>
-  <div id="receipt-body"></div>
-</div>
-
 <nav class="nav hidden">
   <button class="nav-item active" data-screen="cal">カレンダー</button>
   <button class="nav-item" data-screen="inv">請求書、出面表</button>
   <button class="nav-item" data-screen="sync">NINQクラウド</button>
-  <button class="nav-item" data-screen="receipt">経費</button>
   <button class="nav-item" data-screen="sub">外注</button>
   <button class="nav-item" data-screen="st">設定</button>
 </nav>
@@ -326,13 +293,13 @@
   </div>
 </div>
 
-  <script src="app.js?v=124"></script>
+  <script src="app.js?v=125"></script>
   <script type="module" src="firebase-sync.js?v=2"></script>
   <script src="brand.js?v=35"></script>
   <script src="calendar-layout.js?v=28"></script>
   <script src="range-entries.js?v=28"></script>
   <script src="calendar-connections.js?v=51"></script>
-  <script src="navigation-controls.js?v=38"></script>
+  <script src="navigation-controls.js?v=39"></script>
   <script src="settings-polish.js?v=2"></script>
 </body>
 </html>
