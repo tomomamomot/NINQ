@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.19-2';
+const APP_VERSION = 'v2026.07.19-3';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -2730,12 +2730,111 @@ function exportBackupJson() {
   downloadText(`ninq-backup-${toYmd(new Date())}.json`, JSON.stringify(payload, null, 2), 'application/json;charset=utf-8;');
   setSyncLog('バックアップを書き出しました');
 }
+function importedCompanyPresetMatch(imported, presets) {
+  const aliases = [...new Set([
+    imported?.name,
+    imported?.sheetName,
+    imported?.officialName,
+    ...(Array.isArray(imported?.aliases) ? imported.aliases : []),
+  ].map((value) => String(value || '').trim()).filter(Boolean))];
+  return aliases.map((alias) => findCompanyPresetByAnyName(alias, presets)).find(Boolean) || null;
+}
+function entryImportSignature(entry) {
+  return [
+    entry.date || '', entry.type || 'self', entry.shift || 'day', entry.billingType || 'labor',
+    companyNameLookupKey(entry.company), String(entry.site || '').trim(), String(entry.workerName || '').trim(),
+    num(entry.qty), num(entry.unitRate), num(entry.contractAmount), num(entry.paymentAmount),
+    num(entry.otHours), num(entry.otRate), sortedExpenseText(entry.expenses), String(entry.notes || '').trim(),
+  ].join('\u001f');
+}
+function mergeImportPayload(payload) {
+  const importedEntries = Array.isArray(payload?.entries) ? payload.entries : [];
+  if (!importedEntries.length) throw new Error('追加できる予定がありません');
+
+  const presets = companyPresets().map((preset) => ({ ...preset }));
+  const importedPresets = Array.isArray(payload.companyPresets) ? payload.companyPresets : [];
+  const companyMap = new Map();
+  importedPresets.forEach((imported, index) => {
+    const aliases = [...new Set([imported.name, imported.sheetName, imported.officialName, ...(imported.aliases || [])].map((value) => String(value || '').trim()).filter(Boolean))];
+    let preset = importedCompanyPresetMatch(imported, presets);
+    if (!preset) {
+      const name = String(imported.name || imported.sheetName || imported.officialName || '').trim();
+      if (!name) return;
+      preset = {
+        id: String(imported.id || `import-company-${payload?.source?.year || 'data'}-${index + 1}`),
+        name,
+        sheetName: String(imported.sheetName || name).trim(),
+        officialName: String(imported.officialName || name).trim(),
+        invoiceHonorific: normalizeInvoiceHonorific(imported.invoiceHonorific),
+        dayRate: num(imported.dayRate), nightRate: num(imported.nightRate), otRate: num(imported.otRate), closingDay: closingDayValue(imported.closingDay),
+        updatedAt: new Date().toISOString(),
+      };
+      presets.push(preset);
+    }
+    aliases.forEach((alias) => companyMap.set(companyNameLookupKey(alias), preset.name));
+  });
+
+  const normalizedImported = importedEntries.map((raw) => {
+    const entry = normalizeEntry(raw);
+    const mappedName = companyMap.get(companyNameLookupKey(entry.company));
+    entry.company = mappedName || companyCanonicalNameFromPresets(entry.company, presets);
+    return entry;
+  });
+  const currentById = new Map(state.entries.map((entry) => [entry.id, entry]));
+  const currentSignatures = new Set(state.entries.map(entryImportSignature));
+  let added = 0;
+  let updated = 0;
+  let skipped = 0;
+  const accepted = [];
+  normalizedImported.forEach((entry) => {
+    if (currentById.has(entry.id)) {
+      updated += 1;
+      accepted.push(entry);
+      return;
+    }
+    const signature = entryImportSignature(entry);
+    if (currentSignatures.has(signature)) {
+      skipped += 1;
+      return;
+    }
+    added += 1;
+    accepted.push(entry);
+    currentSignatures.add(signature);
+  });
+
+  const sourceTitle = String(payload?.source?.title || '取込データ');
+  const missingRows = Array.isArray(payload?.validation?.sourceFormulaMissingRows) ? payload.validation.sourceFormulaMissingRows : [];
+  const validationNote = missingRows.length
+    ? `\n\n元表の金額欄が未計算の${missingRows.length}行は、人工・単価・経費からNINQが計算します。`
+    : '';
+  const message = `${sourceTitle}を追加します。\n\n新規 ${added}件\n更新 ${updated}件\n重複のため除外 ${skipped}件${validationNote}\n\n現在のデータは残ります。続けますか？`;
+  if (!window.confirm(message)) return null;
+
+  exportBackupJson();
+  const acceptedIds = new Set(accepted.map((entry) => entry.id));
+  const entries = state.entries.filter((entry) => !acceptedIds.has(entry.id));
+  entries.push(...accepted);
+  const deletedEntryIds = { ...(state.deletedEntryIds || {}) };
+  acceptedIds.forEach((id) => delete deletedEntryIds[id]);
+  state = normalizeState({ ...state, entries, deletedEntryIds, settings: { ...state.settings, companyRates: presets, companies: presets.map((preset) => preset.name) } });
+  markSettingsSections('companies');
+  saveState();
+  renderAll();
+  scheduleDriveAutoSync({ delay: 800, message: '取込データをクラウドへ保存します...' });
+  showSaveFeedback(`${added + updated}件を追加しました`);
+  setSyncLog(`${sourceTitle}: 新規${added}件 / 更新${updated}件 / 重複除外${skipped}件`);
+  return { added, updated, skipped };
+}
 function importBackupJson(file) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
     try {
       const payload = JSON.parse(reader.result);
+      if (payload?.importMode === 'merge') {
+        mergeImportPayload(payload);
+        return;
+      }
       state = normalizeState(payload.state || payload);
       saveState();
       renderAll();
