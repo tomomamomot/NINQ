@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.18-2';
+const APP_VERSION = 'v2026.07.19-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -35,6 +35,7 @@ let selectedDate = toYmd(new Date());
 let selectedCompany = '';
 let invoiceViewMode = 'monthly';
 let expandedAnnualMonth = '';
+const ALL_COMPANIES_KEY = '__all__';
 let activeScreen = 'cal';
 let editingId = null;
 let isDayModalOpen = false;
@@ -192,6 +193,7 @@ function normalizeEntry(entry) {
   return {
     id: String(entry.id || crypto.randomUUID()), date: entry.date || toYmd(new Date()), type: entry.type || 'self', shift: entry.shift || 'day',
     company: entry.company || '', site: entry.site || '', workerName: entry.workerName || '', qty: qtyValue(entry.qty),
+    billingType: entry.billingType === 'contract' ? 'contract' : 'labor', contractAmount: num(entry.contractAmount || 0),
     unitRate: num(entry.unitRate || 0), paymentAmount: num(entry.paymentAmount || 0), paymentAmountSet, otHours: num(entry.otHours || 0), otRate: num(entry.otRate || 0),
     expenses: entry.expenses && typeof entry.expenses === 'object' ? entry.expenses : {}, notes: entry.notes || '',
     invoiceMode: entry.invoiceMode || 'with', rangeGroupId: entry.rangeGroupId || '', rangeStart: entry.rangeStart || '', rangeEnd: entry.rangeEnd || '',
@@ -277,8 +279,8 @@ function sortedExpenseText(expenses) {
 }
 function entrySignature(entry) {
   return [
-    entry.type || 'self', entry.shift || 'day', entry.company || '', entry.site || '', entry.workerName || '',
-    num(entry.qty), num(entry.unitRate), num(entry.otHours), num(entry.otRate), entry.notes || '', sortedExpenseText(entry.expenses)
+    entry.type || 'self', entry.shift || 'day', entry.billingType || 'labor', entry.company || '', entry.site || '', entry.workerName || '',
+    num(entry.qty), num(entry.unitRate), num(entry.contractAmount), num(entry.paymentAmount), num(entry.otHours), num(entry.otRate), entry.notes || '', sortedExpenseText(entry.expenses)
   ].join('\u001f');
 }
 function contiguousLegacyGroup(entry) {
@@ -661,20 +663,23 @@ function showSaveFeedback(message) {
 function monthEntries() { const key = monthKey(cursor); return state.entries.filter((entry) => monthKey(entry.date) === key).sort((a, b) => a.date.localeCompare(b.date)); }
 function dayEntries(ymd) { return state.entries.filter((entry) => entry.date === ymd).sort((a, b) => a.createdAt.localeCompare(b.createdAt)); }
 function calcEntry(entry) {
-  const qty = qtyValue(entry.qty), unitRate = num(entry.unitRate), otHours = num(entry.otHours), otRate = num(entry.otRate);
+  const isContract = entry?.billingType === 'contract';
+  const contractAnchor = isContract && isContractBillingAnchor(entry);
+  const qty = isContract ? 0 : qtyValue(entry.qty), unitRate = isContract ? 0 : num(entry.unitRate), otHours = isContract ? 0 : num(entry.otHours), otRate = isContract ? 0 : num(entry.otRate);
   const labor = qty * unitRate, overtime = otHours * otRate;
+  const contractAmount = contractAnchor ? num(entry.contractAmount) : 0;
   const expenses = expenseItems().reduce((sum, item) => sum + num(entry.expenses?.[item.id]), 0);
-  const subtotal = labor + overtime + expenses;
-  const subcontractSales = labor + overtime;
-  const paymentAmount = entry.type === 'sub' ? num(entry.paymentAmount) : 0;
+  const subtotal = labor + contractAmount + overtime + expenses;
+  const subcontractSales = labor + contractAmount + overtime;
+  const paymentAmount = entry.type === 'sub' && (!isContract || contractAnchor) ? num(entry.paymentAmount) : 0;
   const subcontractPay = entry.type === 'sub' ? (entry.paymentAmountSet ? paymentAmount : subcontractSales) : 0;
   const subcontractDiff = entry.type === 'sub' ? subcontractSales - subcontractPay : 0;
-  return { qty, unitRate, otHours, otRate, labor, overtime, expenses, subtotal, subcontractSales, paymentAmount, subcontractPay, subcontractDiff };
+  return { qty, unitRate, otHours, otRate, labor, contractAmount, overtime, expenses, subtotal, subcontractSales, paymentAmount, subcontractPay, subcontractDiff, isContract, contractAnchor };
 }
 function salesTotalForEntry(entry) {
   const parts = { ...DEFAULT_SETTINGS.salesTotalParts, ...(state.settings.salesTotalParts || {}) };
   const calc = calcEntry(entry);
-  return (parts.labor ? calc.labor : 0) + (parts.overtime ? calc.overtime : 0) + (parts.expenses ? calc.expenses : 0);
+  return calc.contractAmount + (parts.labor ? calc.labor : 0) + (parts.overtime ? calc.overtime : 0) + (parts.expenses ? calc.expenses : 0);
 }
 function shiftLabel(shift) { return { day: '日勤', night: '夜勤', trip: '出張' }[shift] || '日勤'; }
 function shiftClass(shift) { return { day: 'day', night: 'night', trip: 'trip' }[shift] || 'day'; }
@@ -697,9 +702,21 @@ function sortEntriesForDemen(a, b) {
     || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
 }
 function typeLabel(type) { return type === 'sub' ? '外注' : '自分'; }
+function billingTypeLabel(entry) { return entry?.billingType === 'contract' ? '請負' : '人工'; }
+function contractGroupEntries(entry) {
+  if (!entry || entry.billingType !== 'contract') return entry ? [entry] : [];
+  if (!entry.rangeGroupId) return [entry];
+  const entries = state.entries.filter((item) => item.rangeGroupId === entry.rangeGroupId && item.billingType === 'contract');
+  return entries.length ? entries : [entry];
+}
+function contractBillingDate(entry) {
+  return contractGroupEntries(entry).map((item) => item.date).filter(Boolean).sort().at(-1) || entry?.date || '';
+}
+function isContractBillingAnchor(entry) { return entry?.billingType === 'contract' && entry.date === contractBillingDate(entry); }
 function invoiceBillableEntry(entry) { return entry.type === 'self' || entry.type === 'sub'; }
 function pickSelectedCompany() {
-  const companies = invoiceViewMode === 'annual' ? getAnnualInvoiceCompanies(cursor.getFullYear()) : getInvoiceCompanies();
+  const baseCompanies = invoiceViewMode === 'annual' ? getAnnualInvoiceCompanies(cursor.getFullYear()) : getInvoiceCompanies();
+  const companies = invoiceViewMode === 'annual' && baseCompanies.length ? [ALL_COMPANIES_KEY, ...baseCompanies] : baseCompanies;
   if (!companies.length) { selectedCompany = ''; return companies; }
   if (!companies.includes(selectedCompany)) selectedCompany = companies[0];
   return companies;
@@ -722,7 +739,10 @@ function getAnnualInvoiceCompanies(year) {
 }
 function companyInvoiceMode(company) { return state.settings.companyInvoiceModes?.[company] || 'with'; }
 function setCompanyInvoiceMode(company, mode) { state.settings.companyInvoiceModes[company] = mode; saveState(); }
-function companyEventTitle(entry) { return [companyCalendarName(entry.company), entry.site].filter(Boolean).join(' / ') || '現場予定'; }
+function companyEventTitle(entry) {
+  const title = [companyCalendarName(entry.company), entry.site].filter(Boolean).join(' / ') || '現場予定';
+  return entry.billingType === 'contract' ? `請 / ${title}` : title;
+}
 function adjacentYmd(ymd, offset) { const d = fromYmd(ymd); d.setDate(d.getDate() + offset); return toYmd(d); }
 function hasAdjacentCompany(ymd, entry) {
   if (!entry.company) return false;
@@ -744,7 +764,7 @@ function renderNav() {
   }
   document.body.classList.toggle('sheet-mobile-open', activeScreen === 'cal' && isSheetPageOpen);
   document.body.classList.toggle('pc-calendar-pinned', activeScreen !== 'cal');
-  document.querySelectorAll('.screen').forEach((el) => el.classList.remove('active', 'print-active'));
+  document.querySelectorAll('.screen').forEach((el) => el.classList.remove('active', 'print-active', 'printing-invoice', 'printing-demen'));
   document.getElementById(`sc-${activeScreen}`)?.classList.add('active');
   document.getElementById('sc-cal')?.classList.toggle('pc-pinned', activeScreen !== 'cal');
   document.querySelectorAll('.nav-item').forEach((el) => el.classList.toggle('active', el.dataset.screen === activeScreen));
@@ -770,7 +790,7 @@ function renderHeaders() {
   const version = document.getElementById('app-version-badge'); if (version) version.textContent = APP_VERSION;
   document.getElementById('cal-sub').textContent = `${monthText} ・ 予定 ${monthEntries().length}件`;
   document.getElementById('sub-sub').textContent = `${monthText}の外注出面`;
-  document.getElementById('inv-sub').textContent = invoiceViewMode === 'annual' ? `${cursor.getFullYear()}年の会社別取引` : `${monthText}の会社別帳票`;
+  document.getElementById('inv-sub').textContent = invoiceViewMode === 'annual' ? `${cursor.getFullYear()}年の年次集計` : `${monthText}の会社別帳票`;
   ['cal', 'sub'].forEach((prefix) => { const el = document.getElementById(`${prefix}-mnav`); if (el) el.textContent = monthText; });
   const invoiceNav = document.getElementById('inv-mnav'); if (invoiceNav) invoiceNav.textContent = invoiceViewMode === 'annual' ? `${cursor.getFullYear()}年` : monthText;
 }
@@ -830,12 +850,13 @@ function desktopSheetTotals(entries, expenseColumns) {
   const totals = {
     qty: sumBy(entries, (entry) => calcEntry(entry).qty),
     labor: sumBy(entries, (entry) => calcEntry(entry).labor),
+    contract: sumBy(entries, (entry) => calcEntry(entry).contractAmount),
     otHours: sumBy(entries, (entry) => calcEntry(entry).otHours),
     overtime: sumBy(entries, (entry) => calcEntry(entry).overtime),
     expenses: expenseColumns.map((item) => ({ ...item, total: sumBy(entries, (entry) => num(entry.expenses?.[item.id])) })),
   };
   totals.expenseTotal = totals.expenses.reduce((sum, item) => sum + item.total, 0);
-  totals.grandTotal = totals.labor + totals.overtime + totals.expenseTotal;
+  totals.grandTotal = totals.labor + totals.contract + totals.overtime + totals.expenseTotal;
   return totals;
 }
 function desktopSheetFooter(totals, expenseColumns) {
@@ -863,6 +884,17 @@ function desktopSheetRow(entry, date, dayLabel, expenseColumns, rowIndex, dayRow
   let colIndex = dayLabel === null ? 1 : 0;
   const cell = (content, className = '') => desktopSheetCell(content, rowIndex, colIndex++, className);
   const dayCell = dayLabel === null ? '' : desktopSheetCell(dayLabel, rowIndex, 0, 'desktop-sheet-day', dayRowspan > 1 ? `rowspan="${dayRowspan}"` : '');
+  if (entry?.billingType === 'contract') {
+    return `<tr class="desktop-sheet-contract-row" data-sheet-row data-entry-id="${escapeHtml(entry.id)}" data-date="${escapeHtml(date)}">
+      ${dayCell}
+      ${cell(escapeHtml(companySheetName(entry.company)), 'desktop-sheet-readonly')}
+      ${cell(`<span class="desktop-contract-badge">請負</span>${escapeHtml(entry.site || '')}`, `${siteClass} desktop-sheet-readonly`)}
+      ${cell('', 'desktop-sheet-readonly')}${cell('', 'desktop-sheet-readonly')}${cell('', 'desktop-sheet-readonly')}
+      ${cell('', 'desktop-sheet-readonly')}${cell('', 'desktop-sheet-readonly')}${cell('', 'desktop-sheet-readonly')}
+      ${expenseColumns.map((item) => cell(num(expenses[item.id]) ? yenPlain(num(expenses[item.id])) : '', 'desktop-sheet-readonly')).join('')}
+      ${cell(calc.subtotal ? yenPlain(calc.subtotal) : '', 'desktop-sheet-total desktop-sheet-readonly')}
+    </tr>`;
+  }
   return `<tr data-sheet-row data-entry-id="${escapeHtml(entry?.id || '')}" data-date="${escapeHtml(date)}">
     ${dayCell}
     ${cell(desktopSheetInput({ field: 'company', value: entry ? companySheetName(entry.company) : '' }))}
@@ -923,7 +955,9 @@ function renderDayEntries() {
   }
   body.innerHTML = `<div class="day-mini-list">${entries.map((entry) => {
     const isSub = entry.type === 'sub';
-    return `<div class="day-mini-card ${shiftClass(entry.shift)} ${isSub ? 'sub' : ''}"><div class="day-mini-row"><div class="day-mini-main"><div class="day-mini-site">${escapeHtml(entry.site || '現場名未入力')}</div><div class="day-mini-company">${escapeHtml(companyCalendarName(entry.company) || '会社名未入力')} ・ ${isSub ? escapeHtml(entry.workerName || '外注職人') : '自分'} ・ ${shiftLabel(entry.shift)}</div></div><div class="day-mini-side"><div class="pill ${isSub ? 'sub' : shiftClass(entry.shift)}">${isSub ? '外注' : shiftLabel(entry.shift)}</div>${renderEntryExpenseChips(entry)}</div></div><div class="day-mini-actions"><button class="day-mini-btn" type="button" data-edit-entry="${entry.id}">編集</button><button class="day-mini-btn del" type="button" data-del-entry="${entry.id}">削除</button></div></div>`;
+    const calc = calcEntry(entry);
+    const contractChip = entry.billingType === 'contract' ? `<div class="expense-chip contract-chip">請負 ${yen(num(entry.contractAmount))}${calc.contractAnchor ? '・計上日' : ''}</div>` : '';
+    return `<div class="day-mini-card ${shiftClass(entry.shift)} ${isSub ? 'sub' : ''}"><div class="day-mini-row"><div class="day-mini-main"><div class="day-mini-site">${escapeHtml(entry.site || '現場名未入力')}</div><div class="day-mini-company">${escapeHtml(companyCalendarName(entry.company) || '会社名未入力')} ・ ${isSub ? escapeHtml(entry.workerName || '外注職人') : '自分'} ・ ${shiftLabel(entry.shift)} ・ ${billingTypeLabel(entry)}</div></div><div class="day-mini-side"><div class="pill ${isSub ? 'sub' : shiftClass(entry.shift)}">${entry.billingType === 'contract' ? '請負' : (isSub ? '外注' : shiftLabel(entry.shift))}</div>${contractChip}${renderEntryExpenseChips(entry)}</div></div><div class="day-mini-actions"><button class="day-mini-btn" type="button" data-edit-entry="${entry.id}">編集</button><button class="day-mini-btn del" type="button" data-del-entry="${entry.id}">削除</button></div></div>`;
   }).join('')}<button class="btn-primary" type="button" data-add-date="${selectedDate}">予定を追加</button></div>`;
   modal.classList.toggle('open', isDayModalOpen);
 }
@@ -1161,7 +1195,7 @@ function renderSubScreen() {
     const name = entry.workerName || '名称未入力';
     if (!groups[name]) groups[name] = { days: 0, total: 0, pay: 0, diff: 0, companies: new Set(), entries: [] };
     const calc = calcEntry(entry);
-    groups[name].days += qtyValue(entry.qty); groups[name].total += calc.subtotal; groups[name].pay += calc.subcontractPay; groups[name].diff += calc.subcontractDiff; groups[name].entries.push(entry); if (entry.company) groups[name].companies.add(entry.company);
+    groups[name].days += calc.qty; groups[name].total += calc.subtotal; groups[name].pay += calc.subcontractPay; groups[name].diff += calc.subcontractDiff; groups[name].entries.push(entry); if (entry.company) groups[name].companies.add(entry.company);
   });
   const people = Object.entries(groups).sort((a, b) => b[1].pay - a[1].pay);
   const hidden = !state.settings.showSales;
@@ -1188,14 +1222,15 @@ function invoiceTotals(entries) {
   const rows = entries.map((entry) => ({ entry, calc: calcEntry(entry) }));
   const qty = sumBy(entries, (entry) => calcEntry(entry).qty);
   const labor = sumBy(entries, (entry) => calcEntry(entry).labor);
+  const contract = sumBy(entries, (entry) => calcEntry(entry).contractAmount);
   const otHours = sumBy(entries, (entry) => calcEntry(entry).otHours);
   const overtime = sumBy(entries, (entry) => calcEntry(entry).overtime);
   const expenseColumns = DEMEN_EXPENSE_LABELS.map((label, index) => ({ label, item: expenseItems()[index] || { id: `exp${index + 1}`, label } }));
   const expenses = expenseColumns.map((col) => ({ ...col, total: sumBy(entries, (entry) => num(entry.expenses?.[col.item.id])) }));
   const expenseTotal = expenses.reduce((sum, item) => sum + item.total, 0);
-  const subtotal = labor + overtime;
+  const subtotal = labor + contract + overtime;
   const tax = state.settings.invoiceEnabled ? Math.round(subtotal * (num(state.settings.taxRate) / 100)) : 0;
-  return { rows, qty, labor, otHours, overtime, expenses, expenseTotal, subtotal, tax, total: subtotal + tax + expenseTotal };
+  return { rows, qty, labor, contract, otHours, overtime, expenses, expenseTotal, subtotal, tax, total: subtotal + tax + expenseTotal };
 }
 function buildInvoiceSheet(entries, totals, hidden) {
   const s = state.settings;
@@ -1205,38 +1240,49 @@ function buildInvoiceSheet(entries, totals, hidden) {
   const stamp = s.stampImage ? `<img class="invoice-stamp" src="${s.stampImage}" alt="印鑑">` : '';
   const senderAddress = [s.postalCode ? `〒 ${escapeHtml(s.postalCode)}` : '', s.address ? escapeHtml(s.address) : ''].filter(Boolean).join(' ');
   const laborGroups = [
-    { label: '別紙出面表参照', entries: entries.filter((entry) => entry.shift !== 'night') },
-    { label: '夜間', night: true, entries: entries.filter((entry) => entry.shift === 'night') },
+    { label: '別紙出面表参照', entries: entries.filter((entry) => entry.billingType !== 'contract' && entry.shift !== 'night') },
+    { label: '夜間', night: true, entries: entries.filter((entry) => entry.billingType !== 'contract' && entry.shift === 'night') },
   ].filter((group) => group.entries.length);
-  const laborRows = (laborGroups.length ? laborGroups : [{ label: '別紙出面表参照', entries: [] }]).map((group, index) => {
+  const laborRows = laborGroups.map((group, index) => {
     const rates = [...new Set(group.entries.map((entry) => calcEntry(entry).unitRate).filter(Boolean))];
     const qty = sumBy(group.entries, (entry) => calcEntry(entry).qty);
     const labor = sumBy(group.entries, (entry) => calcEntry(entry).labor);
     return `<tr class="${group.night ? 'invoice-night-row' : ''}"><td>${index === 0 ? `${cursor.getMonth() + 1}月` : ''}</td><td colspan="2" class="left">${group.label}</td><td>${qty ? qtyLabel(qty) : ''}</td><td>人工</td><td class="right">${rates.length === 1 ? yenPlain(rates[0], hidden) : ''}</td><td class="right">${labor ? yenPlain(labor, hidden) : ''}</td><td></td></tr>`;
   }).join('');
+  const contractRows = entries.filter((entry) => entry.billingType === 'contract' && calcEntry(entry).contractAnchor).map((entry, index) => {
+    const amount = calcEntry(entry).contractAmount;
+    return `<tr class="invoice-contract-row"><td>${!laborRows && index === 0 ? `${cursor.getMonth() + 1}月` : ''}</td><td colspan="2" class="left">${escapeHtml(entry.site || '請負工事')}／請負工事</td><td>1</td><td>式</td><td class="right">${yenPlain(amount, hidden)}</td><td class="right">${yenPlain(amount, hidden)}</td><td></td></tr>`;
+  }).join('');
   const expenseRows = totals.expenses.map((item) => `<tr><td></td><td colspan="2" class="left">${escapeHtml(item.label)}</td><td></td><td></td><td></td><td class="right">${item.total ? yenPlain(item.total, hidden) : ''}</td><td></td></tr>`).join('');
-  const blankRows = Array.from({ length: 6 }, () => '<tr class="invoice-blank-row"><td></td><td colspan="2"></td><td></td><td></td><td></td><td></td><td></td></tr>').join('');
+  const blankRows = Array.from({ length: Math.max(0, 6 - (contractRows.match(/<tr/g) || []).length) }, () => '<tr class="invoice-blank-row"><td></td><td colspan="2"></td><td></td><td></td><td></td><td></td><td></td></tr>').join('');
   return `
     <div class="invoice-scroll">
       <div class="invoice-sheet invoice-size-${invoiceFontSize}" id="print-invoice-box">
         <div class="invoice-title">御　請　求　書</div>
-        <div class="invoice-date">${invoiceDateLabel()}</div>
-        <div class="invoice-period">対象期間：${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</div>
-        <div class="invoice-to"><span>${escapeHtml(invoiceCompany)}</span><b>${escapeHtml(companyInvoiceHonorific(selectedCompany))}</b></div>
-        <div class="invoice-message">　　下記のとおりご請求申し上げます</div>
-        <div class="invoice-sender">
-          ${stamp}
-          <strong>${escapeHtml(s.companyName || s.name || '')}</strong>
-          <span>${senderAddress}</span>
-          <span>${s.tel ? `TEL ${escapeHtml(s.tel)}` : ''}</span>
-          <span>${s.invoiceNo ? `登録番号：${escapeHtml(s.invoiceNo)}` : ''}</span>
+        <div class="invoice-head-grid">
+          <div class="invoice-recipient">
+            <div class="invoice-to"><span>${escapeHtml(invoiceCompany)}</span><b>${escapeHtml(companyInvoiceHonorific(selectedCompany))}</b></div>
+            <div class="invoice-message">　　下記のとおりご請求申し上げます</div>
+            <div class="invoice-amount"><span>御請求金額</span><strong>${yen(totals.total, hidden)}</strong></div>
+            <div class="invoice-tax-note">※税込</div>
+          </div>
+          <div class="invoice-meta-block">
+            <div class="invoice-date">${invoiceDateLabel()}</div>
+            <div class="invoice-period">対象期間：${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</div>
+            <div class="invoice-sender">
+              ${stamp}
+              <strong>${escapeHtml(s.companyName || s.name || '')}</strong>
+              <span>${senderAddress}</span>
+              <span>${s.tel ? `TEL ${escapeHtml(s.tel)}` : ''}</span>
+              <span>${s.invoiceNo ? `登録番号：${escapeHtml(s.invoiceNo)}` : ''}</span>
+            </div>
+          </div>
         </div>
-        <div class="invoice-amount"><span>御請求金額</span><strong>${yen(totals.total, hidden)}</strong></div>
-        <div class="invoice-tax-note">※税込</div>
         <table class="invoice-table">
           <thead><tr><th>項目</th><th colspan="2">名称・形状・寸法</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th><th>備考</th></tr></thead>
           <tbody>
             ${laborRows}
+            ${contractRows}
             <tr><td></td><td colspan="2" class="left">残業</td><td>${totals.otHours || ''}</td><td>h</td><td class="right">${otRate ? yenPlain(otRate, hidden) : ''}</td><td class="right">${totals.overtime ? yenPlain(totals.overtime, hidden) : ''}</td><td></td></tr>
             <tr><td></td><td colspan="2" class="right">小計</td><td></td><td></td><td></td><td class="right">${yenPlain(totals.subtotal, hidden)}</td><td></td></tr>
             <tr><td></td><td colspan="2" class="right">消費税${num(s.taxRate)}%</td><td></td><td></td><td></td><td class="right">${yenPlain(totals.tax, hidden)}</td><td></td></tr>
@@ -1263,12 +1309,13 @@ function dayInvoiceSummary(entries, day, expenseColumns) {
   const qty = sumBy(dayItems, (entry) => calcEntry(entry).qty);
   const unitRate = dayItems.find((entry) => calcEntry(entry).unitRate)?.unitRate || 0;
   const labor = sumBy(dayItems, (entry) => calcEntry(entry).labor);
+  const contract = sumBy(dayItems, (entry) => calcEntry(entry).contractAmount);
   const otHours = sumBy(dayItems, (entry) => calcEntry(entry).otHours);
   const otRate = dayItems.find((entry) => calcEntry(entry).otRate)?.otRate || 0;
   const overtime = sumBy(dayItems, (entry) => calcEntry(entry).overtime);
   const expenses = expenseColumns.map((col) => sumBy(dayItems, (entry) => num(entry.expenses?.[col.item.id])));
-  const total = labor + overtime + expenses.reduce((sum, value) => sum + value, 0);
-  return { dayItems, sites, qty, unitRate, labor, otHours, otRate, overtime, expenses, total };
+  const total = labor + contract + overtime + expenses.reduce((sum, value) => sum + value, 0);
+  return { dayItems, sites, qty, unitRate, labor, contract, otHours, otRate, overtime, expenses, total };
 }
 function buildDemenSheet(entries, totals, hidden) {
   const expenseColumns = totals.expenses;
@@ -1283,7 +1330,8 @@ function buildDemenSheet(entries, totals, hidden) {
     const calc = calcEntry(entry);
     const expenses = expenseColumns.map((col) => num(entry.expenses?.[col.item.id]));
     const siteClass = entry.shift === 'night' ? 'left demen-night-site' : 'left';
-    return `<tr class="${entry.shift === 'night' ? 'demen-night-row' : ''}">${dayCell}<td class="${siteClass}">${escapeHtml(entry.site || '')}</td><td>${calc.qty || ''}</td><td class="right">${calc.unitRate ? yenPlain(calc.unitRate, hidden) : ''}</td><td class="right">${calc.labor ? yenPlain(calc.labor, hidden) : ''}</td><td>${calc.otHours || ''}</td><td class="right">${calc.otRate ? yenPlain(calc.otRate, hidden) : ''}</td><td class="right">${calc.overtime ? yenPlain(calc.overtime, hidden) : ''}</td>${expenses.map((value) => `<td class="right">${value ? yenPlain(value, hidden) : ''}</td>`).join('')}<td class="right">${calc.subtotal ? yenPlain(calc.subtotal, hidden) : ''}</td></tr>`;
+    const siteLabel = entry.billingType === 'contract' ? `請負／${entry.site || '現場未入力'}` : (entry.site || '');
+    return `<tr class="${entry.shift === 'night' ? 'demen-night-row' : ''} ${entry.billingType === 'contract' ? 'demen-contract-row' : ''}">${dayCell}<td class="${siteClass}">${escapeHtml(siteLabel)}</td><td>${calc.qty || ''}</td><td class="right">${calc.unitRate ? yenPlain(calc.unitRate, hidden) : ''}</td><td class="right">${calc.labor ? yenPlain(calc.labor, hidden) : ''}</td><td>${calc.otHours || ''}</td><td class="right">${calc.otRate ? yenPlain(calc.otRate, hidden) : ''}</td><td class="right">${calc.overtime ? yenPlain(calc.overtime, hidden) : ''}</td>${expenses.map((value) => `<td class="right">${value ? yenPlain(value, hidden) : ''}</td>`).join('')}<td class="right">${calc.subtotal ? yenPlain(calc.subtotal, hidden) : ''}</td></tr>`;
   };
   const bodyRows = billingDates.map((date) => {
     const parsed = fromYmd(date);
@@ -1303,8 +1351,8 @@ function buildDemenSheet(entries, totals, hidden) {
         </thead>
         <tbody>${bodyRows}</tbody>
         <tfoot>
-          <tr><td></td><td class="right">小計</td><td>${qtyLabel(totals.qty)}</td><td></td><td class="right">${yenPlain(totals.labor, hidden)}</td><td>${totals.otHours || ''}</td><td></td><td class="right">${totals.overtime ? yenPlain(totals.overtime, hidden) : ''}</td>${totals.expenses.map((item) => `<td class="right">${item.total ? yenPlain(item.total, hidden) : ''}</td>`).join('')}<td class="right">${yenPlain(totals.labor + totals.overtime + totals.expenseTotal, hidden)}</td></tr>
-          <tr class="demen-grand-row"><td colspan="9"></td><td colspan="3" class="right">合計</td><td colspan="3" class="right">${yenPlain(totals.labor + totals.overtime + totals.expenseTotal, hidden)}</td></tr>
+          <tr><td></td><td class="right">小計</td><td>${qtyLabel(totals.qty)}</td><td></td><td class="right">${yenPlain(totals.labor, hidden)}</td><td>${totals.otHours || ''}</td><td></td><td class="right">${totals.overtime ? yenPlain(totals.overtime, hidden) : ''}</td>${totals.expenses.map((item) => `<td class="right">${item.total ? yenPlain(item.total, hidden) : ''}</td>`).join('')}<td class="right">${yenPlain(totals.labor + totals.contract + totals.overtime + totals.expenseTotal, hidden)}</td></tr>
+          <tr class="demen-grand-row"><td colspan="9"></td><td colspan="3" class="right">合計</td><td colspan="3" class="right">${yenPlain(totals.labor + totals.contract + totals.overtime + totals.expenseTotal, hidden)}</td></tr>
         </tfoot>
       </table>
     </div>`;
@@ -1335,13 +1383,14 @@ function annualCompanyTotals(months) {
     selfQty: all.selfQty + month.selfQty,
     subcontractQty: all.subcontractQty + month.subcontractQty,
     labor: all.labor + month.totals.labor,
+    contract: all.contract + month.totals.contract,
     overtime: all.overtime + month.totals.overtime,
     expenses: all.expenses + month.totals.expenseTotal,
     tax: all.tax + month.totals.tax,
     total: all.total + month.totals.total,
     subcontractPay: all.subcontractPay + month.subcontractPay,
     subcontractDiff: all.subcontractDiff + month.subcontractDiff,
-  }), { qty: 0, selfQty: 0, subcontractQty: 0, labor: 0, overtime: 0, expenses: 0, tax: 0, total: 0, subcontractPay: 0, subcontractDiff: 0 });
+  }), { qty: 0, selfQty: 0, subcontractQty: 0, labor: 0, contract: 0, overtime: 0, expenses: 0, tax: 0, total: 0, subcontractPay: 0, subcontractDiff: 0 });
 }
 function annualMonthDetailHtml(month, hidden) {
   if (!month.entries.length) return '<div class="annual-detail-empty">この締め分の取引はありません</div>';
@@ -1356,10 +1405,10 @@ function annualMonthDetailHtml(month, hidden) {
       <td>${escapeHtml(fmtDateJP(entry.date))}</td>
       <td>${escapeHtml(shiftLabel(entry.shift))}</td>
       <td class="left">${escapeHtml(entry.site || '現場未入力')}</td>
-      <td>${escapeHtml(typeLabel(entry.type))}</td>
+      <td>${escapeHtml(`${typeLabel(entry.type)}・${billingTypeLabel(entry)}`)}</td>
       <td class="left">${escapeHtml(entry.type === 'sub' ? entry.workerName || '職人名未入力' : state.settings.name || '自分')}</td>
-      <td>${qtyLabel(calc.qty)}</td>
-      <td class="right">${yenPlain(calc.unitRate, hidden)}</td>
+      <td>${calc.isContract ? '請負' : qtyLabel(calc.qty)}</td>
+      <td class="right">${calc.isContract ? '-' : yenPlain(calc.unitRate, hidden)}</td>
       <td class="right">${calc.otHours ? `${calc.otHours}h / ${yenPlain(calc.overtime, hidden)}` : '-'}</td>
       <td class="left">${escapeHtml(expenseText)}</td>
       <td class="right">${yenPlain(calc.subtotal, hidden)}</td>
@@ -1375,9 +1424,9 @@ function annualMonthDetailHtml(month, hidden) {
       .map((item) => `${item.label} ${yen(item.value, hidden)}`)
       .join(' / ') || '経費なし';
     return `<div class="annual-entry-card">
-      <div class="annual-entry-head"><strong>${escapeHtml(fmtDateJP(entry.date))} ${escapeHtml(shiftLabel(entry.shift))}</strong><span>${escapeHtml(typeLabel(entry.type))}</span></div>
+      <div class="annual-entry-head"><strong>${escapeHtml(fmtDateJP(entry.date))} ${escapeHtml(shiftLabel(entry.shift))}</strong><span>${escapeHtml(`${typeLabel(entry.type)}・${billingTypeLabel(entry)}`)}</span></div>
       <div class="annual-entry-site">${escapeHtml(entry.site || '現場未入力')}</div>
-      <div class="annual-entry-meta">${entry.type === 'sub' ? escapeHtml(entry.workerName || '職人名未入力') : escapeHtml(state.settings.name || '自分')} / ${qtyLabel(calc.qty)}人工 / 単価 ${yen(calc.unitRate, hidden)}</div>
+      <div class="annual-entry-meta">${entry.type === 'sub' ? escapeHtml(entry.workerName || '職人名未入力') : escapeHtml(state.settings.name || '自分')} / ${calc.isContract ? (calc.contractAnchor ? `請負 ${yen(calc.contractAmount, hidden)}（計上）` : '請負（作業日）') : `${qtyLabel(calc.qty)}人工 / 単価 ${yen(calc.unitRate, hidden)}`}</div>
       <div class="annual-entry-meta">残業 ${calc.otHours ? `${calc.otHours}h ${yen(calc.overtime, hidden)}` : 'なし'} / ${escapeHtml(expenseText)}</div>
       <div class="annual-entry-money"><span>売上 ${yen(calc.subtotal, hidden)}</span>${entry.type === 'sub' ? `<span>支払 ${yen(calc.subcontractPay, hidden)} / 差額 ${yen(calc.subcontractDiff, hidden)}</span>` : ''}</div>
     </div>`;
@@ -1392,21 +1441,56 @@ function renderAnnualTransactions(company, hidden) {
   const desktopRows = months.map((month) => `<tr class="annual-month-row ${activeMonth?.month === month.month ? 'active' : ''}" data-annual-month="${month.month}">
     <td>${month.month + 1}月</td><td>${escapeHtml(fmtDateJP(month.range.start))}<br>${escapeHtml(fmtDateJP(month.range.end))}</td>
     <td>${qtyLabel(month.totals.qty)}</td><td>${qtyLabel(month.selfQty)}</td><td>${qtyLabel(month.subcontractQty)}</td>
-    <td class="right">${yenPlain(month.totals.labor, hidden)}</td><td class="right">${yenPlain(month.totals.overtime, hidden)}</td><td class="right">${yenPlain(month.totals.expenseTotal, hidden)}</td><td class="right">${yenPlain(month.totals.tax, hidden)}</td><td class="right strong">${yenPlain(month.totals.total, hidden)}</td><td class="right">${yenPlain(month.subcontractPay, hidden)}</td><td class="right">${yenPlain(month.subcontractDiff, hidden)}</td>
+    <td class="right">${yenPlain(month.totals.labor, hidden)}</td><td class="right">${yenPlain(month.totals.contract, hidden)}</td><td class="right">${yenPlain(month.totals.overtime, hidden)}</td><td class="right">${yenPlain(month.totals.expenseTotal, hidden)}</td><td class="right">${yenPlain(month.totals.tax, hidden)}</td><td class="right strong">${yenPlain(month.totals.total, hidden)}</td><td class="right">${yenPlain(month.subcontractPay, hidden)}</td><td class="right">${yenPlain(month.subcontractDiff, hidden)}</td>
   </tr>`).join('');
   const cards = months.map((month) => `<button class="annual-month-card ${activeMonth?.month === month.month ? 'active' : ''}" type="button" data-annual-month="${month.month}">
     <span class="annual-month-card-head"><strong>${month.month + 1}月締め分</strong><small>${escapeHtml(fmtDateJP(month.range.start))}〜${escapeHtml(fmtDateJP(month.range.end))}</small></span>
-    <span class="annual-month-card-grid"><span>総人工 <b>${qtyLabel(month.totals.qty)}</b></span><span>自分 / 外注 <b>${qtyLabel(month.selfQty)} / ${qtyLabel(month.subcontractQty)}</b></span><span>請求合計 <b>${yen(month.totals.total, hidden)}</b></span><span>外注支払 / 差額 <b>${yen(month.subcontractPay, hidden)} / ${yen(month.subcontractDiff, hidden)}</b></span></span>
+    <span class="annual-month-card-grid"><span>総人工 <b>${qtyLabel(month.totals.qty)}</b></span><span>人工 / 請負売上 <b>${yen(month.totals.labor, hidden)} / ${yen(month.totals.contract, hidden)}</b></span><span>請求合計 <b>${yen(month.totals.total, hidden)}</b></span><span>外注支払 / 差額 <b>${yen(month.subcontractPay, hidden)} / ${yen(month.subcontractDiff, hidden)}</b></span></span>
   </button>`).join('');
   return `<div class="annual-summary-grid">
-      <div class="annual-stat"><span>年間請求</span><strong>${yen(total.total, hidden)}</strong></div>
+      <div class="annual-stat"><span>年間請求</span><strong>${yen(total.total, hidden)}</strong><small>人工 ${yen(total.labor, hidden)} / 請負 ${yen(total.contract, hidden)}</small></div>
       <div class="annual-stat"><span>総人工</span><strong>${qtyLabel(total.qty)}</strong><small>自分 ${qtyLabel(total.selfQty)} / 外注 ${qtyLabel(total.subcontractQty)}</small></div>
       <div class="annual-stat"><span>外注支払</span><strong>${yen(total.subcontractPay, hidden)}</strong></div>
       <div class="annual-stat"><span>外注差額</span><strong>${yen(total.subcontractDiff, hidden)}</strong></div>
     </div>
-    <div class="annual-table-wrap"><table class="annual-table"><thead><tr><th>月</th><th>対象期間</th><th>総人工</th><th>自分</th><th>外注</th><th>人工売上</th><th>残業</th><th>経費</th><th>消費税</th><th>請求合計</th><th>外注支払</th><th>外注差額</th></tr></thead><tbody>${desktopRows}</tbody><tfoot><tr><th colspan="2">年間合計</th><th>${qtyLabel(total.qty)}</th><th>${qtyLabel(total.selfQty)}</th><th>${qtyLabel(total.subcontractQty)}</th><th class="right">${yenPlain(total.labor, hidden)}</th><th class="right">${yenPlain(total.overtime, hidden)}</th><th class="right">${yenPlain(total.expenses, hidden)}</th><th class="right">${yenPlain(total.tax, hidden)}</th><th class="right">${yenPlain(total.total, hidden)}</th><th class="right">${yenPlain(total.subcontractPay, hidden)}</th><th class="right">${yenPlain(total.subcontractDiff, hidden)}</th></tr></tfoot></table></div>
+    <div class="annual-table-wrap"><table class="annual-table"><thead><tr><th>月</th><th>対象期間</th><th>総人工</th><th>自分</th><th>外注</th><th>人工売上</th><th>請負売上</th><th>残業</th><th>経費</th><th>消費税</th><th>請求合計</th><th>外注支払</th><th>外注差額</th></tr></thead><tbody>${desktopRows}</tbody><tfoot><tr><th colspan="2">年間合計</th><th>${qtyLabel(total.qty)}</th><th>${qtyLabel(total.selfQty)}</th><th>${qtyLabel(total.subcontractQty)}</th><th class="right">${yenPlain(total.labor, hidden)}</th><th class="right">${yenPlain(total.contract, hidden)}</th><th class="right">${yenPlain(total.overtime, hidden)}</th><th class="right">${yenPlain(total.expenses, hidden)}</th><th class="right">${yenPlain(total.tax, hidden)}</th><th class="right">${yenPlain(total.total, hidden)}</th><th class="right">${yenPlain(total.subcontractPay, hidden)}</th><th class="right">${yenPlain(total.subcontractDiff, hidden)}</th></tr></tfoot></table></div>
     <div class="annual-month-list">${cards}</div>
     ${activeMonth ? `<section class="annual-detail"><div class="annual-detail-head"><div><strong>${activeMonth.month + 1}月締め分の明細</strong><span>${escapeHtml(companyBillingPeriodLabel(company, new Date(year, activeMonth.month, 1)))}</span></div><button type="button" data-annual-month="${activeMonth.month}" aria-label="明細を閉じる">×</button></div>${annualMonthDetailHtml(activeMonth, hidden)}</section>` : ''}`;
+}
+function allCompanyAnnualMonths(year) {
+  const companies = getAnnualInvoiceCompanies(year);
+  const byCompany = companies.map((company) => ({ company, months: annualCompanyMonths(company, year) }));
+  return Array.from({ length: 12 }, (_, month) => {
+    const companyMonths = byCompany.map((item) => ({ company: item.company, ...item.months[month] })).filter((item) => item.entries.length);
+    return { month, companyMonths, totals: annualCompanyTotals(companyMonths) };
+  });
+}
+function renderAllCompanyAnnualTransactions(hidden) {
+  const year = cursor.getFullYear();
+  const months = allCompanyAnnualMonths(year);
+  const total = annualCompanyTotals(months.flatMap((month) => month.companyMonths));
+  const activeMonth = expandedAnnualMonth === '' ? null : months[Number(expandedAnnualMonth)];
+  const desktopRows = months.map((month) => `<tr class="annual-month-row ${activeMonth?.month === month.month ? 'active' : ''}" data-annual-month="${month.month}">
+    <td>${month.month + 1}月</td><td>各社締め日基準</td><td>${qtyLabel(month.totals.qty)}</td><td>${qtyLabel(month.totals.selfQty)}</td><td>${qtyLabel(month.totals.subcontractQty)}</td>
+    <td class="right">${yenPlain(month.totals.labor, hidden)}</td><td class="right">${yenPlain(month.totals.contract, hidden)}</td><td class="right">${yenPlain(month.totals.overtime, hidden)}</td><td class="right">${yenPlain(month.totals.expenses, hidden)}</td><td class="right">${yenPlain(month.totals.tax, hidden)}</td><td class="right strong">${yenPlain(month.totals.total, hidden)}</td><td class="right">${yenPlain(month.totals.subcontractPay, hidden)}</td><td class="right">${yenPlain(month.totals.subcontractDiff, hidden)}</td>
+  </tr>`).join('');
+  const cards = months.map((month) => `<button class="annual-month-card ${activeMonth?.month === month.month ? 'active' : ''}" type="button" data-annual-month="${month.month}">
+    <span class="annual-month-card-head"><strong>${month.month + 1}月締め分</strong><small>${month.companyMonths.length}社</small></span>
+    <span class="annual-month-card-grid"><span>総人工 <b>${qtyLabel(month.totals.qty)}</b></span><span>人工 / 請負売上 <b>${yen(month.totals.labor, hidden)} / ${yen(month.totals.contract, hidden)}</b></span><span>請求合計 <b>${yen(month.totals.total, hidden)}</b></span><span>外注支払 / 差額 <b>${yen(month.totals.subcontractPay, hidden)} / ${yen(month.totals.subcontractDiff, hidden)}</b></span></span>
+  </button>`).join('');
+  const detail = activeMonth ? activeMonth.companyMonths.map((item) => `<details class="annual-company-detail">
+    <summary><span><strong>${escapeHtml(companySheetName(item.company))}</strong><small>${escapeHtml(fmtDateJP(item.range.start))}〜${escapeHtml(fmtDateJP(item.range.end))}</small></span><b>${yen(item.totals.total, hidden)}</b></summary>
+    ${annualMonthDetailHtml(item, hidden)}
+  </details>`).join('') : '';
+  return `<div class="annual-summary-grid">
+      <div class="annual-stat"><span>全社年間請求</span><strong>${yen(total.total, hidden)}</strong><small>人工 ${yen(total.labor, hidden)} / 請負 ${yen(total.contract, hidden)}</small></div>
+      <div class="annual-stat"><span>総人工</span><strong>${qtyLabel(total.qty)}</strong><small>自分 ${qtyLabel(total.selfQty)} / 外注 ${qtyLabel(total.subcontractQty)}</small></div>
+      <div class="annual-stat"><span>外注支払</span><strong>${yen(total.subcontractPay, hidden)}</strong></div>
+      <div class="annual-stat"><span>外注差額</span><strong>${yen(total.subcontractDiff, hidden)}</strong></div>
+    </div>
+    <div class="annual-table-wrap"><table class="annual-table"><thead><tr><th>月</th><th>集計基準</th><th>総人工</th><th>自分</th><th>外注</th><th>人工売上</th><th>請負売上</th><th>残業</th><th>経費</th><th>消費税</th><th>請求合計</th><th>外注支払</th><th>外注差額</th></tr></thead><tbody>${desktopRows}</tbody><tfoot><tr><th colspan="2">全社年間合計</th><th>${qtyLabel(total.qty)}</th><th>${qtyLabel(total.selfQty)}</th><th>${qtyLabel(total.subcontractQty)}</th><th class="right">${yenPlain(total.labor, hidden)}</th><th class="right">${yenPlain(total.contract, hidden)}</th><th class="right">${yenPlain(total.overtime, hidden)}</th><th class="right">${yenPlain(total.expenses, hidden)}</th><th class="right">${yenPlain(total.tax, hidden)}</th><th class="right">${yenPlain(total.total, hidden)}</th><th class="right">${yenPlain(total.subcontractPay, hidden)}</th><th class="right">${yenPlain(total.subcontractDiff, hidden)}</th></tr></tfoot></table></div>
+    <div class="annual-month-list">${cards}</div>
+    ${activeMonth ? `<section class="annual-detail"><div class="annual-detail-head"><div><strong>${activeMonth.month + 1}月締め分の会社別明細</strong><span>各社の締め日を基準に集計</span></div><button type="button" data-annual-month="${activeMonth.month}" aria-label="明細を閉じる">×</button></div>${detail || '<div class="annual-detail-empty">この月の取引はありません</div>'}</section>` : ''}`;
 }
 function renderInvoiceScreen() {
   const tabs = document.getElementById('co-tabs');
@@ -1414,10 +1498,10 @@ function renderInvoiceScreen() {
   document.querySelectorAll('[data-invoice-view]').forEach((button) => button.classList.toggle('active', button.dataset.invoiceView === invoiceViewMode));
   const companies = pickSelectedCompany();
   if (!companies.length) { tabs.innerHTML = ''; body.innerHTML = `<div class="empty"><div>この${invoiceViewMode === 'annual' ? '年' : '月'}の請求対象はまだありません</div><p>自分または外注の予定を入力すると会社別に表示されます。</p></div>`; return; }
-  tabs.innerHTML = companies.map((company) => `<button class="co-chip ${company === selectedCompany ? 'active' : ''}" data-company="${escapeHtml(company)}">${escapeHtml(companySheetName(company))}</button>`).join('');
+  tabs.innerHTML = companies.map((company) => `<button class="co-chip ${company === selectedCompany ? 'active' : ''}" data-company="${escapeHtml(company)}">${company === ALL_COMPANIES_KEY ? '全体' : escapeHtml(companySheetName(company))}</button>`).join('');
   const hidden = !state.settings.showSales;
   if (invoiceViewMode === 'annual') {
-    body.innerHTML = renderAnnualTransactions(selectedCompany, hidden);
+    body.innerHTML = selectedCompany === ALL_COMPANIES_KEY ? renderAllCompanyAnnualTransactions(hidden) : renderAnnualTransactions(selectedCompany, hidden);
     return;
   }
   const entries = entriesForInvoiceCompany();
@@ -1530,7 +1614,7 @@ function renderSettings() {
   renderSettingListEditors();
 }
 function createDefaultEntry(type, date) {
-  return { id: '', date, type, shift: 'day', company: '', site: '', workerName: '', qty: 1, unitRate: '', paymentAmount: '', paymentAmountSet: false, otHours: 0, otRate: '', expenses: Object.fromEntries(expenseItems().map((item) => [item.id, 0])), notes: '', invoiceMode: 'with' };
+  return { id: '', date, type, shift: 'day', billingType: 'labor', contractAmount: 0, company: '', site: '', workerName: '', qty: 1, unitRate: '', paymentAmount: '', paymentAmountSet: false, otHours: 0, otRate: '', expenses: Object.fromEntries(expenseItems().map((item) => [item.id, 0])), notes: '', invoiceMode: 'with' };
 }
 function renderRangeExclusions(selectedDates = null) {
   const wrap = document.getElementById('range-exclude-wrap');
@@ -1610,11 +1694,19 @@ function commitDatePicker() {
   closeDatePicker();
 }
 function currentFormSubtotal() {
+  if (document.querySelector('[data-billing-type].active')?.dataset.billingType === 'contract') return num(document.getElementById('f-contract-amount')?.value);
   const qty = qtyValue(document.getElementById('f-qty')?.value);
   const unitRate = num(document.getElementById('f-rate')?.value);
   const otHours = num(document.getElementById('f-ot-hours')?.value);
   const otRate = num(document.getElementById('f-ot-rate')?.value);
   return qty * unitRate + otHours * otRate;
+}
+function updateBillingTypeFields() {
+  const isContract = document.querySelector('[data-billing-type].active')?.dataset.billingType === 'contract';
+  document.getElementById('labor-qty-wrap')?.classList.toggle('hidden', isContract);
+  document.getElementById('labor-rate-wrap')?.classList.toggle('hidden', isContract);
+  document.getElementById('contract-amount-wrap')?.classList.toggle('hidden', !isContract);
+  updateSubcontractDiff();
 }
 function updateSubcontractDiff() {
   const wrap = document.getElementById('sub-pay-wrap');
@@ -1641,8 +1733,10 @@ function openModal(type, id = null) {
   const startValue = editRange?.start || entry.date;
   const endValue = editRange?.end || entry.date;
   const isSub = entry.type === 'sub' || type === 'sub';
+  const isContract = entry.billingType === 'contract';
   const expenseFields = modalExpenseItems().map((item) => `<div class="field"><label>${escapeHtml(item.label)}</label><input type="number" min="0" step="1" data-expense-id="${item.id}" value="${num(entry.expenses?.[item.id]) || ''}"></div>`).join('');
   const typeButtons = `<button class="type-btn ${entry.type === 'self' ? 'active' : ''}" data-entry-type="self" type="button">自分</button>${subcontractEnabled() || entry.type === 'sub' ? `<button class="type-btn ${entry.type === 'sub' ? 'active' : ''}" data-entry-type="sub" type="button">外注職人</button>` : ''}`;
+  const billingButtons = `<button class="type-btn ${!isContract ? 'active' : ''}" data-billing-type="labor" type="button">人工</button><button class="type-btn ${isContract ? 'active' : ''}" data-billing-type="contract" type="button">請負</button>`;
   const entryCompany = normalizeCompanyInputName(entry.company);
   const companyChoices = companyOptionPresets();
   const companyOptionsHtml = companyChoices.map((preset) => `<option value="${escapeHtml(preset.name)}" ${preset.name === entryCompany ? 'selected' : ''}>${escapeHtml(preset.sheetName || preset.name)}</option>`).join('');
@@ -1652,6 +1746,7 @@ function openModal(type, id = null) {
   document.getElementById('modal-body').innerHTML = `
     <div class="type-sel">${typeButtons}</div>
     <form id="entry-form">
+      <div class="field"><label>売上方式</label><div class="type-sel billing-type-sel">${billingButtons}</div></div>
       <div class="field-r2">
         <div class="field"><label>開始日</label><input id="f-date" class="date-picker-input" type="text" inputmode="none" readonly data-date-picker value="${escapeHtml(startValue)}"></div>
         <div class="field"><label>終了日</label><input id="f-end-date" class="date-picker-input" type="text" inputmode="none" readonly data-date-picker value="${escapeHtml(endValue)}"></div>
@@ -1660,8 +1755,9 @@ function openModal(type, id = null) {
       ${isSub ? `<div class="field" id="worker-wrap"><label>職人名</label><input id="f-worker" value="${escapeHtml(entry.workerName)}" placeholder="佐藤大工"></div>` : `<div class="field hidden" id="worker-wrap"><label>職人名</label><input id="f-worker" value="${escapeHtml(entry.workerName)}"></div>`}
       <div class="field"><label>会社名</label>${companyPickBlock}</div>
       <div class="field"><label>現場名</label><input id="f-site" value="${escapeHtml(entry.site)}" placeholder="空欄でも保存できます"></div>
-      <div class="field-r2"><div class="field"><label>勤務区分</label><select id="f-shift"><option value="day" ${entry.shift === 'day' ? 'selected' : ''}>日勤</option><option value="night" ${entry.shift === 'night' ? 'selected' : ''}>夜勤</option><option value="trip" ${entry.shift === 'trip' ? 'selected' : ''}>出張</option></select></div><div class="field"><label>人工</label><input id="f-qty" type="number" min="0" step="0.5" value="${entry.qty}"></div></div>
-      <div class="field-r3"><div class="field"><label>単価</label><input id="f-rate" type="number" min="0" step="1" value="${rateFieldValue(entry.unitRate)}"></div><div class="field"><label>残業時間</label><input id="f-ot-hours" type="number" min="0" step="0.5" value="${num(entry.otHours) || ''}"></div><div class="field"><label>残業単価</label><input id="f-ot-rate" type="number" min="0" step="1" value="${rateFieldValue(entry.otRate)}"></div></div>
+      <div class="field-r2"><div class="field"><label>勤務区分</label><select id="f-shift"><option value="day" ${entry.shift === 'day' ? 'selected' : ''}>日勤</option><option value="night" ${entry.shift === 'night' ? 'selected' : ''}>夜勤</option><option value="trip" ${entry.shift === 'trip' ? 'selected' : ''}>出張</option></select></div><div class="field ${isContract ? 'hidden' : ''}" id="labor-qty-wrap"><label>人工</label><input id="f-qty" type="number" min="0" step="0.5" value="${entry.qty}"></div></div>
+      <div class="field-r3 ${isContract ? 'hidden' : ''}" id="labor-rate-wrap"><div class="field"><label>単価</label><input id="f-rate" type="number" min="0" step="1" value="${rateFieldValue(entry.unitRate)}"></div><div class="field"><label>残業時間</label><input id="f-ot-hours" type="number" min="0" step="0.5" value="${num(entry.otHours) || ''}"></div><div class="field"><label>残業単価</label><input id="f-ot-rate" type="number" min="0" step="1" value="${rateFieldValue(entry.otRate)}"></div></div>
+      <div class="field ${isContract ? '' : 'hidden'}" id="contract-amount-wrap"><label>請負金額（仕事全体）</label><input id="f-contract-amount" type="number" min="0" step="1" value="${num(entry.contractAmount) || ''}" placeholder="未確定の場合は空欄でも保存できます"><small class="field-note">複数日の場合は最終日に1回だけ売上へ計上します</small></div>
       <div class="${isSub ? '' : 'hidden'}" id="sub-pay-wrap">
         <div class="field-r2"><div class="field"><label>支払金額</label><input id="f-payment-amount" type="number" min="0" step="1" value="${optionalMoneyFieldValue(entry.paymentAmount, entry.paymentAmountSet)}" placeholder="実際に払う金額"></div><div class="field"><label>差額</label><input id="sub-diff-preview" readonly value=""></div></div>
         <div class="sub-pay-note">売上計算 <strong id="sub-sales-preview">¥0</strong> との差額を表示します</div>
@@ -1671,6 +1767,7 @@ function openModal(type, id = null) {
       <div class="btn-row entry-actions"><button class="btn-secondary" type="button" id="cancel-entry-btn">キャンセル</button><button class="btn-primary" type="submit">保存</button></div>
     </form>`;
   renderRangeExclusions(editRange?.excludedDates || []);
+  updateBillingTypeFields();
   updateSubcontractDiff();
   document.getElementById('modal-bg').classList.add('open');
 }
@@ -1690,6 +1787,7 @@ function applyCompanyRate(name) {
 }
 function collectEntryForm() {
   const type = document.querySelector('[data-entry-type].active')?.dataset.entryType || 'self';
+  const billingType = document.querySelector('[data-billing-type].active')?.dataset.billingType === 'contract' ? 'contract' : 'labor';
   const startDate = document.getElementById('f-date').value;
   const endDate = document.getElementById('f-end-date')?.value || startDate;
   if (!startDate) throw new Error('開始日を入力してください');
@@ -1701,9 +1799,9 @@ function collectEntryForm() {
   const paymentInput = document.getElementById('f-payment-amount');
   const paymentAmountSet = type === 'sub' && !!paymentInput && paymentInput.value.trim() !== '';
   const base = {
-    type, shift: document.getElementById('f-shift').value,
+    type, billingType, contractAmount: billingType === 'contract' ? num(document.getElementById('f-contract-amount')?.value) : 0, shift: document.getElementById('f-shift').value,
     company: normalizeCompanyInputName(document.getElementById('f-company').value), site: document.getElementById('f-site').value.trim(), workerName: document.getElementById('f-worker').value.trim(),
-    qty: num(document.getElementById('f-qty').value), unitRate: num(document.getElementById('f-rate').value), paymentAmount: type === 'sub' ? num(paymentInput?.value) : 0, paymentAmountSet, otHours: num(document.getElementById('f-ot-hours').value), otRate: num(document.getElementById('f-ot-rate').value),
+    qty: billingType === 'contract' ? 0 : num(document.getElementById('f-qty')?.value), unitRate: billingType === 'contract' ? 0 : num(document.getElementById('f-rate')?.value), paymentAmount: type === 'sub' ? num(paymentInput?.value) : 0, paymentAmountSet, otHours: billingType === 'contract' ? 0 : num(document.getElementById('f-ot-hours')?.value), otRate: billingType === 'contract' ? 0 : num(document.getElementById('f-ot-rate')?.value),
     expenses: {}, notes: document.getElementById('f-notes').value.trim(), invoiceMode: 'with', createdAt, updatedAt: new Date().toISOString()
   };
   document.querySelectorAll('[data-expense-id]').forEach((input) => { base.expenses[input.dataset.expenseId] = num(input.value); });
@@ -2371,7 +2469,7 @@ function icsDate(ymd) { return String(ymd || '').replaceAll('-', ''); }
 function icsStamp() { return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''); }
 function calendarDescription(entry) {
   const calc = calcEntry(entry);
-  const lines = [`区分: ${typeLabel(entry.type)} / ${shiftLabel(entry.shift)}`];
+  const lines = [`区分: ${typeLabel(entry.type)} / ${shiftLabel(entry.shift)} / ${billingTypeLabel(entry)}`];
   if (entry.workerName) lines.push(`職人名: ${entry.workerName}`);
   if (entry.company) lines.push(`会社名: ${entry.company}`);
   if (entry.site) lines.push(`現場名: ${entry.site}`);
@@ -2382,7 +2480,7 @@ function calendarDescription(entry) {
 function calendarExportKey(entry) {
   const company = normalizeCompanyInputName(entry.company);
   const site = String(entry.site || '').trim();
-  if (company && site) return [entry.type || 'self', entry.shift || 'day', company, site, entry.workerName || ''].join('\u001f');
+  if (company && site) return [entry.type || 'self', entry.shift || 'day', entry.billingType || 'labor', company, site, entry.workerName || ''].join('\u001f');
   if (entry.rangeGroupId) return `range:${entry.rangeGroupId}`;
   return `single:${entry.id}`;
 }
@@ -2741,24 +2839,24 @@ function gcalEntry(id) {
 function csvCell(value) { const text = String(value ?? ''); return `"${text.replaceAll('"', '""')}"`; }
 function downloadCsv(filename, rows) { const csv = `\ufeff${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}`; const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; link.click(); URL.revokeObjectURL(link.href); }
 function exportDemenCsv() {
-  const rows = [['日付', '会社名', '現場名', '区分', '人工', '単価', '人工計', '残業h', '残業計', ...expenseItems().map((item) => item.label), '合計']];
+  const rows = [['日付', '会社名', '現場名', '勤務区分', '売上方式', '人工', '単価', '人工計', '請負金額', '残業h', '残業計', ...expenseItems().map((item) => item.label), '合計']];
   entriesForInvoiceCompany().forEach((entry) => {
     const calc = calcEntry(entry);
-    rows.push([entry.date, companySheetName(entry.company), entry.site, shiftLabel(entry.shift), calc.qty, calc.unitRate, calc.labor, calc.otHours, calc.overtime, ...expenseItems().map((item) => num(entry.expenses?.[item.id])), calc.subtotal]);
+    rows.push([entry.date, companySheetName(entry.company), entry.site, shiftLabel(entry.shift), billingTypeLabel(entry), calc.qty || '', calc.unitRate || '', calc.labor || '', calc.contractAmount || '', calc.otHours || '', calc.overtime || '', ...expenseItems().map((item) => num(entry.expenses?.[item.id])), calc.subtotal]);
   });
   downloadCsv(`${monthKey(cursor)}_${selectedCompany}_出面表.csv`, rows);
 }
 function exportSubPaymentsCsv() {
-  const rows = [['日付', '職人名', '会社名', '現場名', '勤務', '人工', '単価', '売上計算', '支払金額', '差額', 'メモ']];
+  const rows = [['日付', '職人名', '会社名', '現場名', '勤務', '売上方式', '人工', '単価', '請負金額', '売上計算', '支払金額', '差額', 'メモ']];
   monthEntries().filter((entry) => entry.type === 'sub').forEach((entry) => {
     const calc = calcEntry(entry);
-    rows.push([entry.date, entry.workerName || '', companySheetName(entry.company), entry.site, shiftLabel(entry.shift), calc.qty, calc.unitRate, calc.subtotal, calc.subcontractPay, calc.subcontractDiff, entry.notes || '']);
+    rows.push([entry.date, entry.workerName || '', companySheetName(entry.company), entry.site, shiftLabel(entry.shift), billingTypeLabel(entry), calc.qty, calc.unitRate, calc.contractAmount, calc.subtotal, calc.subcontractPay, calc.subcontractDiff, entry.notes || '']);
   });
   downloadCsv(`${monthKey(cursor)}_外注支払い.csv`, rows);
 }
 function exportInvoiceCsv() {
   const totals = invoiceTotals(entriesForInvoiceCompany());
-  downloadCsv(`${monthKey(cursor)}_${selectedCompany}_請求書.csv`, [['請求先', companyOfficialName(selectedCompany)], ['対象月', fmtMonth(cursor)], ['対象期間', companyBillingPeriodLabel(selectedCompany)], ['売上（税別）', totals.subtotal], ['消費税', totals.tax], ['諸経費', totals.expenseTotal], ['合計', totals.total]]);
+  downloadCsv(`${monthKey(cursor)}_${selectedCompany}_請求書.csv`, [['請求先', companyOfficialName(selectedCompany)], ['対象月', fmtMonth(cursor)], ['対象期間', companyBillingPeriodLabel(selectedCompany)], ['売上方式', '金額'], ['人工売上', totals.labor], ['請負金額', totals.contract], ['残業', totals.overtime], ['売上（税別）', totals.subtotal], ['消費税', totals.tax], ['諸経費', totals.expenseTotal], ['合計', totals.total]]);
 }
 function printView(kind) {
   const screen = document.getElementById('sc-inv');
@@ -2768,12 +2866,12 @@ function printView(kind) {
     window.clearTimeout(printCleanupTimer);
     demen?.classList.remove('hidden');
     invoice?.classList.remove('hidden');
-    screen?.classList.remove('print-active');
+    screen?.classList.remove('print-active', 'printing-invoice', 'printing-demen');
     window.removeEventListener('afterprint', cleanup);
   };
   window.clearTimeout(printCleanupTimer);
   window.removeEventListener('afterprint', cleanup);
-  screen?.classList.add('print-active');
+  screen?.classList.add('print-active', kind === 'invoice' ? 'printing-invoice' : 'printing-demen');
   if (kind === 'invoice') demen?.classList.add('hidden');
   else invoice?.classList.add('hidden');
   window.addEventListener('afterprint', cleanup, { once: true });
@@ -2921,8 +3019,9 @@ function bindEvents() {
     if (closeSheetButton) { closeSheetPage(); return; }
     const menuButton = event.target.closest('#menu-toggle-btn,[data-menu-open]');
     if (menuButton) {
-      const menu = menuButton.closest('.topbar').querySelector('.top-menu');
-      menu.classList.toggle('hidden');
+      const screen = menuButton.closest('.screen');
+      const menu = screen?.querySelector('.top-menu') || document.getElementById('top-menu');
+      menu?.classList.toggle('hidden');
       return;
     }
     const screenLink = event.target.closest('[data-screen-link]');
@@ -2953,6 +3052,12 @@ function bindEvents() {
       document.querySelectorAll('[data-entry-type]').forEach((button) => button.classList.remove('active')); event.target.classList.add('active');
       document.getElementById('worker-wrap').classList.toggle('hidden', event.target.dataset.entryType !== 'sub');
       updateSubcontractDiff();
+      return;
+    }
+    if (event.target.matches('[data-billing-type]')) {
+      document.querySelectorAll('[data-billing-type]').forEach((button) => button.classList.remove('active'));
+      event.target.classList.add('active');
+      updateBillingTypeFields();
       return;
     }
     if (!event.target.closest('.top-menu') && !event.target.closest('.ghost-icon-btn')) {
@@ -3062,7 +3167,7 @@ function bindEvents() {
     if (event.target.matches('#st-bank,#st-branch,#st-accno,#st-accname')) scheduleSettingsAutosave({ section: 'bank' });
     if (event.target.matches('#st-invno')) scheduleSettingsAutosave({ section: 'invoice' });
     if (event.target.matches('[data-company-preset-field]')) updateCompanyPresetField(event.target.dataset.companyPresetId, event.target.dataset.companyPresetField, event.target.value);
-    if (event.target.matches('#entry-form input, #entry-form textarea, #entry-form select')) updateSubcontractDiff();
+    if (event.target.matches('#entry-form input, #entry-form textarea, #entry-form select')) { updateBillingTypeFields(); updateSubcontractDiff(); }
   });
   window.addEventListener('beforeunload', flushSettingsAutosave);
 
