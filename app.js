@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.19-1';
+const APP_VERSION = 'v2026.07.19-2';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -2815,22 +2815,19 @@ function clearStampImage() {
 function deleteEntry(id) {
   const target = state.entries.find((entry) => entry.id === id);
   if (!target) return;
-  state.entries = state.entries.filter((entry) => entry.id !== id);
-  tombstoneEntryIds([id]);
-  if (target.rangeGroupId) {
-    const groupItems = state.entries.filter((entry) => entry.rangeGroupId === target.rangeGroupId);
-    const nextExcluded = [...new Set([
-      ...(target.excludedDates || []),
-      target.date,
-      ...groupItems.flatMap((entry) => entry.excludedDates || []),
-    ])].sort();
-    state.entries = state.entries.map((entry) => (
-      entry.rangeGroupId === target.rangeGroupId
-        ? { ...entry, excludedDates: nextExcluded, updatedAt: new Date().toISOString() }
-        : entry
-    ));
-  }
+  const group = entryRangeGroup(target);
+  const ids = group.ids.size ? group.ids : new Set([id]);
+  state.entries = state.entries.filter((entry) => !ids.has(entry.id));
+  tombstoneEntryIds([...ids]);
   saveState(); renderAll(); scheduleDriveAutoSync();
+}
+
+function deleteEntryConfirmMessage(id) {
+  const target = state.entries.find((entry) => entry.id === id);
+  if (!target) return 'この予定を削除しますか？';
+  const group = entryRangeGroup(target);
+  if (group.entries.length <= 1) return 'この予定を削除しますか？';
+  return `${shortDateLabel(group.start)}〜${shortDateLabel(group.end)}のつながった予定を、すべて削除しますか？`;
 }
 function gcalEntry(id) {
   const entry = state.entries.find((item) => item.id === id); if (!entry) return;
@@ -3037,7 +3034,7 @@ function bindEvents() {
     const addDate = event.target.closest('[data-add-date]');
     if (addDate) { selectedDate = addDate.dataset.addDate; closeDayModal(); openModal('self'); return; }
     const editButton = event.target.closest('[data-edit-entry]'); if (editButton) { closeDayModal(); openModal('self', editButton.dataset.editEntry); return; }
-    const delButton = event.target.closest('[data-del-entry]'); if (delButton) { if (confirm('この予定を削除しますか？')) deleteEntry(delButton.dataset.delEntry); return; }
+    const delButton = event.target.closest('[data-del-entry]'); if (delButton) { if (confirm(deleteEntryConfirmMessage(delButton.dataset.delEntry))) deleteEntry(delButton.dataset.delEntry); return; }
     const companySelect = event.target.closest('#f-company-select');
     if (companySelect) { const input = document.getElementById('f-company'); if (input && companySelect.value) { input.value = companySheetName(companySelect.value); applyCompanyRate(companySelect.value); updateSubcontractDiff(); } return; }
     const companyChip = event.target.closest('[data-company]'); if (companyChip) { selectedCompany = companyChip.dataset.company; expandedAnnualMonth = ''; renderInvoiceScreen(); return; }
