@@ -201,7 +201,7 @@
     const items = MENU_ITEMS.filter((item) => item.screen !== 'sub' || isSubVisible());
     drawer.innerHTML = `
       <div class="ninq-drawer-head">
-        <button class="ninq-drawer-icon-btn" type="button" data-ninq-go-top aria-label="TOPへ戻る">←</button>
+        <span aria-hidden="true"></span>
         <div class="ninq-drawer-title">NINQ</div>
         <button class="ninq-drawer-icon-btn" type="button" data-ninq-menu-close aria-label="閉じる">×</button>
       </div>
