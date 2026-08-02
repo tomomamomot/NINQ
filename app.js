@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.07.20-2';
+const APP_VERSION = 'v2026.08.02-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -2934,13 +2934,18 @@ function gcalEntry(id) {
 }
 function csvCell(value) { const text = String(value ?? ''); return `"${text.replaceAll('"', '""')}"`; }
 function downloadCsv(filename, rows) { const csv = `\ufeff${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}`; const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; link.click(); URL.revokeObjectURL(link.href); }
+function reportFileBase(kind) {
+  const company = companySheetName(selectedCompany) || selectedCompany || '会社名未設定';
+  const month = `${cursor.getFullYear()}年${cursor.getMonth() + 1}月`;
+  return `${company} ${month}${kind}`.replace(/[<>:"/\\|?*]/g, '').trim();
+}
 function exportDemenCsv() {
   const rows = [['日付', '会社名', '現場名', '勤務区分', '売上方式', '人工', '単価', '人工計', '請負金額', '残業h', '残業計', ...expenseItems().map((item) => item.label), '合計']];
   entriesForInvoiceCompany().forEach((entry) => {
     const calc = calcEntry(entry);
     rows.push([entry.date, companySheetName(entry.company), entry.site, shiftLabel(entry.shift), billingTypeLabel(entry), calc.qty || '', calc.unitRate || '', calc.labor || '', calc.contractAmount || '', calc.otHours || '', calc.overtime || '', ...expenseItems().map((item) => num(entry.expenses?.[item.id])), calc.subtotal]);
   });
-  downloadCsv(`${monthKey(cursor)}_${selectedCompany}_出面表.csv`, rows);
+  downloadCsv(`${reportFileBase('出面表')}.csv`, rows);
 }
 function exportSubPaymentsCsv() {
   const rows = [['日付', '職人名', '会社名', '現場名', '勤務', '売上方式', '人工', '単価', '請負金額', '売上計算', '支払金額', '差額', 'メモ']];
@@ -2952,14 +2957,17 @@ function exportSubPaymentsCsv() {
 }
 function exportInvoiceCsv() {
   const totals = invoiceTotals(entriesForInvoiceCompany());
-  downloadCsv(`${monthKey(cursor)}_${selectedCompany}_請求書.csv`, [['請求先', companyOfficialName(selectedCompany)], ['対象月', fmtMonth(cursor)], ['対象期間', companyBillingPeriodLabel(selectedCompany)], ['売上方式', '金額'], ['人工売上', totals.labor], ['請負金額', totals.contract], ['残業', totals.overtime], ['売上（税別）', totals.subtotal], ['消費税', totals.tax], ['諸経費', totals.expenseTotal], ['合計', totals.total]]);
+  downloadCsv(`${reportFileBase('請求書')}.csv`, [['請求先', companyOfficialName(selectedCompany)], ['対象月', fmtMonth(cursor)], ['対象期間', companyBillingPeriodLabel(selectedCompany)], ['売上方式', '金額'], ['人工売上', totals.labor], ['請負金額', totals.contract], ['残業', totals.overtime], ['売上（税別）', totals.subtotal], ['消費税', totals.tax], ['諸経費', totals.expenseTotal], ['合計', totals.total]]);
 }
 function printView(kind) {
   const screen = document.getElementById('sc-inv');
   const demen = document.getElementById('print-demen-wrap');
   const invoice = document.getElementById('print-invoice-box');
+  const previousTitle = document.title;
+  const printTitle = reportFileBase(kind === 'invoice' ? '請求書' : '出面表');
   const cleanup = () => {
     window.clearTimeout(printCleanupTimer);
+    if (document.title === printTitle) document.title = previousTitle;
     demen?.classList.remove('hidden');
     invoice?.classList.remove('hidden');
     screen?.classList.remove('print-active', 'printing-invoice', 'printing-demen');
@@ -2970,6 +2978,7 @@ function printView(kind) {
   screen?.classList.add('print-active', kind === 'invoice' ? 'printing-invoice' : 'printing-demen');
   if (kind === 'invoice') demen?.classList.add('hidden');
   else invoice?.classList.add('hidden');
+  document.title = printTitle;
   window.addEventListener('afterprint', cleanup, { once: true });
   window.print();
   printCleanupTimer = window.setTimeout(cleanup, 60000);
