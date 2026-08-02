@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.08.02-1';
+const APP_VERSION = 'v2026.08.02-2';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -2935,9 +2935,8 @@ function gcalEntry(id) {
 function csvCell(value) { const text = String(value ?? ''); return `"${text.replaceAll('"', '""')}"`; }
 function downloadCsv(filename, rows) { const csv = `\ufeff${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}`; const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; link.click(); URL.revokeObjectURL(link.href); }
 function reportFileBase(kind) {
-  const company = companySheetName(selectedCompany) || selectedCompany || '会社名未設定';
   const month = `${cursor.getFullYear()}年${cursor.getMonth() + 1}月`;
-  return `${company} ${month}${kind}`.replace(/[<>:"/\\|?*]/g, '').trim();
+  return `${month}${kind}`;
 }
 function exportDemenCsv() {
   const rows = [['日付', '会社名', '現場名', '勤務区分', '売上方式', '人工', '単価', '人工計', '請負金額', '残業h', '残業計', ...expenseItems().map((item) => item.label), '合計']];
