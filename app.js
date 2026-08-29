@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.08.02-2';
+const APP_VERSION = 'v2026.08.29-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -1812,6 +1812,7 @@ function collectEntryForm() {
   if (!dates.length) throw new Error('登録する日がありません。除外日を減らしてください');
   const isRange = allDates.length > 1;
   const rangeGroupId = isRange ? (original?.rangeGroupId || crypto.randomUUID()) : '';
+  const overtimeEditDate = original && dates.includes(original.date) ? original.date : dates[0];
   return dates.map((date) => ({
     ...base,
     id: editingId && originalByDate.has(date) ? originalByDate.get(date).id : crypto.randomUUID(),
@@ -1820,6 +1821,7 @@ function collectEntryForm() {
     rangeStart: isRange ? startDate : '',
     rangeEnd: isRange ? endDate : '',
     excludedDates: isRange ? excludedDates : [],
+    otHours: billingType === 'contract' ? 0 : (date === overtimeEditDate ? base.otHours : num(originalByDate.get(date)?.otHours)),
     expenses: editingId && originalRange?.entries.length > 1 && date !== original.date && originalByDate.has(date) ? { ...(originalByDate.get(date).expenses || {}) } : { ...base.expenses }
   }));
 }
