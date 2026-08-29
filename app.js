@@ -6,15 +6,17 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.08.29-1';
+const APP_VERSION = 'v2026.08.29-2';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
+const DAY_MODAL_OVERTIME_ID = 'overtime';
+const DEFAULT_DAY_MODAL_ITEMS = ['exp1', 'exp2', 'exp4', 'exp5', DAY_MODAL_OVERTIME_ID];
 const DEFAULT_SETTINGS = {
   name: '', postalCode: '', address: '', tel: '', companyName: '', bank: '', branch: '', accountNo: '', accountName: '',
   invoiceNo: '', invoiceEnabled: true, taxRate: 10, stampImage: '', invoiceFontSize: '1',
   defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0,
-  companies: [], companyRates: [], deletedCompanyPresetIds: {}, expenseItems: DEFAULT_EXPENSE_ITEMS.map((label, index) => ({ id: `exp${index + 1}`, label })),
+  companies: [], companyRates: [], deletedCompanyPresetIds: {}, expenseItems: DEFAULT_EXPENSE_ITEMS.map((label, index) => ({ id: `exp${index + 1}`, label })), dayModalItems: DEFAULT_DAY_MODAL_ITEMS,
   companyInvoiceModes: {}, showSales: true, showSubcontract: true, uiSize: '1', fontChoice: 'system', googleClientId: '', googleCalendarId: 'primary', googleStoreMode: 'local', googleAccountEmail: '', googleSyncEnabled: false, googleConflictMode: 'newer',
   salesTotalParts: { labor: true, overtime: true, expenses: false }, settingUpdatedAt: {},
 };
@@ -24,7 +26,7 @@ const SETTINGS_SECTIONS = {
   bank: ['bank', 'branch', 'accountNo', 'accountName'],
   invoice: ['invoiceNo', 'invoiceEnabled', 'taxRate', 'stampImage', 'companyInvoiceModes', 'invoiceFontSize'],
   companies: ['companies', 'companyRates', 'deletedCompanyPresetIds'],
-  expenses: ['expenseItems'],
+  expenses: ['expenseItems', 'dayModalItems'],
   display: ['showSales', 'showSubcontract', 'salesTotalParts', 'uiSize', 'fontChoice'],
   google: ['googleClientId', 'googleCalendarId', 'googleStoreMode', 'googleAccountEmail', 'googleSyncEnabled', 'googleConflictMode'],
 };
@@ -105,6 +107,7 @@ function normalizeState(source) {
   settings.companyRates = normalizeCompanyRates(settings.companyRates, settings.companies);
   settings.companies = settings.companyRates.map((item) => item.name);
   settings.expenseItems = normalizeExpenseItems(settings.expenseItems);
+  settings.dayModalItems = normalizeDayModalItems(settings.dayModalItems, settings.expenseItems);
   settings.companyInvoiceModes = settings.companyInvoiceModes && typeof settings.companyInvoiceModes === 'object' ? settings.companyInvoiceModes : {};
   settings.deletedCompanyPresetIds = settings.deletedCompanyPresetIds && typeof settings.deletedCompanyPresetIds === 'object' ? settings.deletedCompanyPresetIds : {};
   settings.salesTotalParts = { ...DEFAULT_SETTINGS.salesTotalParts, ...(settings.salesTotalParts || {}) };
@@ -132,6 +135,11 @@ function normalizeExpenseItems(items) {
   const list = Array.isArray(items) ? items : [];
   const mapped = list.map((item, index) => typeof item === 'string' ? { id: `exp${index + 1}`, label: item } : { id: item.id || `exp${index + 1}`, label: item.label || `項目${index + 1}` }).filter((item) => item.label.trim());
   return mapped.length ? mapped : clone(DEFAULT_SETTINGS.expenseItems);
+}
+function normalizeDayModalItems(items, availableExpenses = DEFAULT_SETTINGS.expenseItems) {
+  const available = new Set([...normalizeExpenseItems(availableExpenses).map((item) => item.id), DAY_MODAL_OVERTIME_ID]);
+  const source = Array.isArray(items) ? items : DEFAULT_DAY_MODAL_ITEMS;
+  return [...new Set(source.map((item) => String(item || '').trim()).filter(Boolean))].filter((id) => available.has(id));
 }
 function closingDayValue(value) {
   const day = Math.trunc(num(value));
@@ -335,10 +343,20 @@ function modalExpenseItems() {
   expenseItems().forEach((item) => map.set(item.id, item));
   return [...map.values()];
 }
+function dayModalDisplayOptions() {
+  return [...expenseItems().map((item) => ({ ...item, kind: 'expense' })), { id: DAY_MODAL_OVERTIME_ID, label: '残業', kind: 'overtime' }];
+}
+function dayModalDisplayItems() {
+  const selected = new Set(normalizeDayModalItems(state.settings.dayModalItems, expenseItems()));
+  return dayModalDisplayOptions().filter((item) => selected.has(item.id));
+}
 function renderEntryExpenseChips(entry) {
-  const chips = coreExpenseItems()
-    .map((item) => ({ id: item.id, label: item.label, value: num(entry.expenses?.[item.id]) }));
-  return `<div class="day-mini-expenses">${chips.map((item) => `<button class="day-mini-expense-chip" type="button" data-expense-entry-id="${escapeHtml(entry.id)}" data-expense-id="${escapeHtml(item.id)}"><span>${escapeHtml(item.label)}</span><strong>${yen(item.value)}</strong></button>`).join('')}</div>`;
+  const chips = dayModalDisplayItems().filter((item) => item.kind !== 'overtime' || entry.billingType !== 'contract');
+  if (!chips.length) return '';
+  return `<div class="day-mini-expenses">${chips.map((item) => {
+    const value = item.kind === 'overtime' ? `${num(entry.otHours)}h` : yen(num(entry.expenses?.[item.id]));
+    return `<button class="day-mini-expense-chip" type="button" data-expense-entry-id="${escapeHtml(entry.id)}" data-expense-id="${escapeHtml(item.id)}"><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(value)}</strong></button>`;
+  }).join('')}</div>`;
 }
 function applyDisplayPreferences() {
   cleanupLegacyDisplayPreferences();
@@ -624,7 +642,13 @@ function ensureCompanySheetNameInput() {
     officialInput.insertAdjacentElement('afterend', select);
   }
 }
-function renderSettingListEditors() { ensureCompanySheetNameInput(); renderCompanyPresetList(); renderEditableList('st-expense-list', 'st-expenses'); }
+function renderDayModalItemSelector() {
+  const list = document.getElementById('st-day-modal-items');
+  if (!list) return;
+  const selected = new Set(normalizeDayModalItems(state.settings.dayModalItems, expenseItems()));
+  list.innerHTML = dayModalDisplayOptions().map((item) => `<label class="setting-check-chip"><input type="checkbox" data-day-modal-item="${escapeHtml(item.id)}" ${selected.has(item.id) ? 'checked' : ''}><span>${escapeHtml(item.label)}</span></label>`).join('');
+}
+function renderSettingListEditors() { ensureCompanySheetNameInput(); renderCompanyPresetList(); renderEditableList('st-expense-list', 'st-expenses'); renderDayModalItemSelector(); }
 function addCompanyPreset() {
   const nameInput = document.getElementById('st-company-new'); if (!nameInput) return;
   const name = nameInput.value.trim(); if (!name) return;
@@ -651,8 +675,9 @@ function addSettingListItem(hiddenId, inputId) {
   const input = document.getElementById(inputId); if (!input) return;
   const value = input.value.trim(); if (!value) return;
   const values = [...new Set([...settingListValues(hiddenId), value])];
-  writeSettingList(hiddenId, values); input.value = ''; renderSettingListEditors();
+  writeSettingList(hiddenId, values); input.value = '';
   scheduleSettingsAutosave({ immediate: true, section: 'expenses' });
+  renderSettingListEditors();
 }
 function showSaveFeedback(message) {
   const el = document.getElementById('save-status'); if (!el) { alert(message); return; }
@@ -975,6 +1000,7 @@ function closeDayModal() {
 }
 
 function expenseItemById(expenseId) {
+  if (expenseId === DAY_MODAL_OVERTIME_ID) return { id: DAY_MODAL_OVERTIME_ID, label: '残業時間（h）', kind: 'overtime' };
   return [...coreExpenseItems(), ...expenseItems()].find((item) => item.id === expenseId) || { id: expenseId, label: '経費' };
 }
 
@@ -1039,9 +1065,12 @@ function openExpenseQuickEdit(entryId, expenseId) {
   const expense = expenseItemById(expenseId);
   expenseQuickEditTarget = { entryId, expenseId };
   const modal = ensureExpenseQuickEditModal();
+  modal.querySelector('#expense-quick-title').textContent = expense.kind === 'overtime' ? '残業を入力' : '経費を入力';
   modal.querySelector('#expense-quick-name').textContent = expense.label;
   const input = modal.querySelector('#expense-quick-amount');
-  input.value = num(entry.expenses?.[expenseId]) || '';
+  input.step = expense.kind === 'overtime' ? '0.5' : '1';
+  input.inputMode = expense.kind === 'overtime' ? 'decimal' : 'numeric';
+  input.value = expense.kind === 'overtime' ? (num(entry.otHours) || '') : (num(entry.expenses?.[expenseId]) || '');
   modal.classList.add('open');
   requestAnimationFrame(updateExpenseQuickPosition);
   setTimeout(() => { input.focus(); input.select(); updateExpenseQuickPosition(); }, 0);
@@ -1059,13 +1088,17 @@ function saveExpenseQuickEdit() {
   const entry = state.entries.find((item) => item.id === expenseQuickEditTarget.entryId);
   const input = document.getElementById('expense-quick-amount');
   if (!entry || !input) { closeExpenseQuickEdit(); return; }
-  entry.expenses = { ...(entry.expenses || {}) };
-  entry.expenses[expenseQuickEditTarget.expenseId] = num(input.value);
+  const isOvertime = expenseQuickEditTarget.expenseId === DAY_MODAL_OVERTIME_ID;
+  if (isOvertime) entry.otHours = num(input.value);
+  else {
+    entry.expenses = { ...(entry.expenses || {}) };
+    entry.expenses[expenseQuickEditTarget.expenseId] = num(input.value);
+  }
   entry.updatedAt = new Date().toISOString();
   closeExpenseQuickEdit();
   saveState();
   renderAll();
-  scheduleDriveAutoSync({ delay: 900, message: '経費をクラウドへ保存します...' });
+  scheduleDriveAutoSync({ delay: 900, message: isOvertime ? '残業をクラウドへ保存します...' : '経費をクラウドへ保存します...' });
 }
 function openSheetPage() {
   if (activeScreen !== 'cal') return;
@@ -2851,12 +2884,15 @@ function importBackupJson(file) {
 function persistSettingsFromForm({ render = false, feedback = '', sections = [] } = {}) {
   const linesToObjects = (text, previous) => text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((label, index) => ({ id: previous[index]?.id || `exp${index + 1}`, label }));
   const companyRates = companyPresetValues();
+  const nextExpenseItems = linesToObjects(document.getElementById('st-expenses').value, expenseItems());
+  const checkedDayModalItems = [...document.querySelectorAll('[data-day-modal-item]:checked')].map((input) => input.dataset.dayModalItem);
+  const dayModalItems = normalizeDayModalItems(checkedDayModalItems, nextExpenseItems);
   const salesTotalParts = {
     labor: document.getElementById('tgl-sales-labor')?.classList.contains('on') !== false,
     overtime: document.getElementById('tgl-sales-overtime')?.classList.contains('on') !== false,
     expenses: document.getElementById('tgl-sales-expenses')?.classList.contains('on') === true,
   };
-  state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, uiSize: fontSizeLevel(document.getElementById('st-ui-size')?.value || DEFAULT_SETTINGS.uiSize), fontChoice: document.getElementById('st-font-choice')?.value || DEFAULT_SETTINGS.fontChoice, invoiceFontSize: fontSizeLevel(document.getElementById('st-invoice-font-size')?.value || state.settings.invoiceFontSize || DEFAULT_SETTINGS.invoiceFontSize), salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: linesToObjects(document.getElementById('st-expenses').value, expenseItems()) };
+  state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, uiSize: fontSizeLevel(document.getElementById('st-ui-size')?.value || DEFAULT_SETTINGS.uiSize), fontChoice: document.getElementById('st-font-choice')?.value || DEFAULT_SETTINGS.fontChoice, invoiceFontSize: fontSizeLevel(document.getElementById('st-invoice-font-size')?.value || state.settings.invoiceFontSize || DEFAULT_SETTINGS.invoiceFontSize), salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: nextExpenseItems, dayModalItems };
   markSettingsSections(sections.length ? sections : Object.keys(SETTINGS_SECTIONS).filter((section) => section !== 'google'));
   state.entries = state.entries.map((entry) => { const nextExpenses = {}; expenseItems().forEach((item) => { nextExpenses[item.id] = num(entry.expenses?.[item.id]); }); return { ...entry, expenses: nextExpenses }; });
   applyDisplayPreferences();
@@ -3118,7 +3154,7 @@ function bindEvents() {
       return;
     }
     const removeSettingItem = event.target.closest('[data-remove-setting-item]');
-    if (removeSettingItem) { const hiddenId = removeSettingItem.dataset.removeSettingItem; const index = Number(removeSettingItem.dataset.removeIndex); const values = settingListValues(hiddenId).filter((_, itemIndex) => itemIndex !== index); writeSettingList(hiddenId, values); renderSettingListEditors(); scheduleSettingsAutosave({ immediate: true, section: 'expenses' }); return; }
+    if (removeSettingItem) { const hiddenId = removeSettingItem.dataset.removeSettingItem; const index = Number(removeSettingItem.dataset.removeIndex); const values = settingListValues(hiddenId).filter((_, itemIndex) => itemIndex !== index); writeSettingList(hiddenId, values); scheduleSettingsAutosave({ immediate: true, section: 'expenses' }); renderSettingListEditors(); return; }
     const closeDayButton = event.target.closest('[data-close-day-modal]');
     if (closeDayButton || event.target.id === 'day-modal-bg') { closeDayModal(); return; }
     const closeSheetButton = event.target.closest('[data-close-sheet-page]');
@@ -3241,6 +3277,7 @@ function bindEvents() {
     const sheetInput = event.target.closest('[data-sheet-field]');
     if (sheetInput) { saveDesktopSheetRow(sheetInput.closest('[data-sheet-row]')); return; }
     if (event.target.id === 'f-date' || event.target.id === 'f-end-date') { renderRangeExclusions(); return; }
+    if (event.target.matches('[data-day-modal-item]')) { scheduleSettingsAutosave({ immediate: true, section: 'expenses' }); return; }
     if (event.target.id === 'google-export-start' || event.target.id === 'google-export-end') { renderSyncScreen(); return; }
     if (event.target.id === 'invoice-font-size-select') {
       state.settings.invoiceFontSize = fontSizeLevel(event.target.value || DEFAULT_SETTINGS.invoiceFontSize);

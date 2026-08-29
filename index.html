@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json?v=35">
 <link rel="icon" href="icon-192.png?v=34">
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=34">
-  <link rel="stylesheet" href="styles.css?v=86">
+  <link rel="stylesheet" href="styles.css?v=87">
 </head>
 <body>
 <div id="sc-cal" class="screen active">
@@ -142,6 +142,8 @@
       <div class="inline-add"><input id="st-expense-new" class="st-input" placeholder="項目名を入力"><button class="mini-add-btn" type="button" id="add-expense-btn">追加</button></div>
       <div class="setting-chip-list" id="st-expense-list"></div>
       <textarea id="st-expenses" class="hidden"></textarea>
+      <label class="setting-sub-label">日付詳細に表示</label>
+      <div class="setting-check-list" id="st-day-modal-items"></div>
     </div>
   </div>
 
@@ -293,7 +295,7 @@
   </div>
 </div>
 
-  <script src="app.js?v=135"></script>
+  <script src="app.js?v=136"></script>
   <script type="module" src="firebase-sync.js?v=2"></script>
   <script src="brand.js?v=35"></script>
   <script src="calendar-layout.js?v=28"></script>
