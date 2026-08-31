@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.01-4';
+const APP_VERSION = 'v2026.09.01-5';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -1292,7 +1292,8 @@ function buildInvoiceSheet(entries, totals, hidden) {
   const invoiceCompany = companyOfficialName(selectedCompany);
   const otRate = entries.find((entry) => calcEntry(entry).otRate)?.otRate || 0;
   const stamp = s.stampImage ? `<img class="invoice-stamp" src="${s.stampImage}" alt="印鑑">` : '';
-  const senderAddress = [s.postalCode ? `〒 ${escapeHtml(s.postalCode)}` : '', s.address ? escapeHtml(s.address) : ''].filter(Boolean).join(' ');
+  const senderPostal = s.postalCode ? `〒 ${escapeHtml(s.postalCode)}` : '';
+  const senderAddress = s.address ? escapeHtml(s.address) : '';
   const laborGroups = [
     { label: '別紙出面表参照', entries: entries.filter((entry) => entry.billingType !== 'contract' && entry.shift !== 'night') },
     { label: '夜間', night: true, entries: entries.filter((entry) => entry.billingType !== 'contract' && entry.shift === 'night') },
@@ -1324,11 +1325,16 @@ function buildInvoiceSheet(entries, totals, hidden) {
             <div class="invoice-date">${invoiceDateLabel()}</div>
             <div class="invoice-period">対象期間：${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</div>
             <div class="invoice-sender">
-              ${stamp}
-              <strong>${escapeHtml(s.companyName || s.name || '')}</strong>
-              <span>${senderAddress}</span>
-              <span>${s.tel ? `TEL ${escapeHtml(s.tel)}` : ''}</span>
-              <span>${s.invoiceNo ? `登録番号：${escapeHtml(s.invoiceNo)}` : ''}</span>
+              <div class="invoice-sender-heading">
+                <div class="invoice-sender-identity">
+                  <strong>${escapeHtml(s.companyName || s.name || '')}</strong>
+                  ${senderPostal ? `<span class="invoice-sender-postal">${senderPostal}</span>` : ''}
+                </div>
+                ${stamp}
+              </div>
+              ${senderAddress ? `<span class="invoice-sender-address">${senderAddress}</span>` : ''}
+              ${s.tel ? `<span>TEL ${escapeHtml(s.tel)}</span>` : ''}
+              ${s.invoiceNo ? `<span>登録番号：${escapeHtml(s.invoiceNo)}</span>` : ''}
             </div>
           </div>
         </div>
