@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.08.29-2';
+const APP_VERSION = 'v2026.09.01-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -512,7 +512,11 @@ function markSettingsSections(sections) {
   state.settings.updatedAt = now;
 }
 function settingsSectionTime(settings, section) {
-  return Date.parse(settings?.settingUpdatedAt?.[section] || settings?.updatedAt || '') || 0;
+  const sectionTime = Date.parse(settings?.settingUpdatedAt?.[section] || '') || 0;
+  if (sectionTime) return sectionTime;
+  const hasSectionTimes = Object.values(settings?.settingUpdatedAt || {})
+    .some((value) => (Date.parse(value || '') || 0) > 0);
+  return hasSectionTimes ? 0 : (Date.parse(settings?.updatedAt || '') || 0);
 }
 function mergeTimestampMaps(...maps) {
   const merged = {};
@@ -984,6 +988,12 @@ function renderDayEntries() {
     const contractChip = entry.billingType === 'contract' ? `<div class="expense-chip contract-chip">請負 ${yen(num(entry.contractAmount))}${calc.contractAnchor ? '・計上日' : ''}</div>` : '';
     return `<div class="day-mini-card ${shiftClass(entry.shift)} ${isSub ? 'sub' : ''}"><div class="day-mini-row"><div class="day-mini-main"><div class="day-mini-site">${escapeHtml(entry.site || '現場名未入力')}</div><div class="day-mini-company">${escapeHtml(companyCalendarName(entry.company) || '会社名未入力')} ・ ${isSub ? escapeHtml(entry.workerName || '外注職人') : '自分'} ・ ${shiftLabel(entry.shift)} ・ ${billingTypeLabel(entry)}</div></div><div class="day-mini-side"><div class="pill ${isSub ? 'sub' : shiftClass(entry.shift)}">${entry.billingType === 'contract' ? '請負' : (isSub ? '外注' : shiftLabel(entry.shift))}</div>${contractChip}${renderEntryExpenseChips(entry)}</div></div><div class="day-mini-actions"><button class="day-mini-btn" type="button" data-edit-entry="${entry.id}">編集</button><button class="day-mini-btn del" type="button" data-del-entry="${entry.id}">削除</button></div></div>`;
   }).join('')}<button class="btn-primary" type="button" data-add-date="${selectedDate}">予定を追加</button></div>`;
+  body.querySelectorAll('[data-expense-entry-id][data-expense-id]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openExpenseQuickEdit(button.dataset.expenseEntryId, button.dataset.expenseId);
+    });
+  });
   modal.classList.toggle('open', isDayModalOpen);
 }
 
@@ -1048,6 +1058,17 @@ function ensureExpenseQuickEditModal() {
     </div>`;
   document.body.appendChild(modal);
   const input = modal.querySelector('#expense-quick-amount');
+  const saveButton = modal.querySelector('[data-expense-quick-save]');
+  saveButton?.addEventListener('pointerdown', (event) => event.preventDefault());
+  saveButton?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    saveExpenseQuickEdit();
+  });
+  input?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    saveExpenseQuickEdit();
+  });
   input?.addEventListener('focus', () => requestAnimationFrame(updateExpenseQuickPosition));
   input?.addEventListener('blur', () => setTimeout(updateExpenseQuickPosition, 120));
   if (!expenseQuickViewportBound) {
@@ -1895,8 +1916,8 @@ function saveGoogleSettings({ feedback = true, render = true, touch = true } = {
 }
 function setSyncLog(message) { const log = document.getElementById('sync-log'); if (log) log.textContent = message; }
 function firebaseAvailable() { return !!window.NinqFirebaseCloud; }
-function mergeFirebaseState(remotePayload) {
-  return mergeDriveState(remotePayload);
+function mergeFirebaseState(remotePayload, options = {}) {
+  return mergeDriveState(remotePayload, options);
 }
 function applyRemoteFirebaseState(remotePayload) {
   state = normalizeState(remotePayload.state || remotePayload);
@@ -1992,6 +2013,25 @@ async function syncFirebaseCloud({ auto = false, reason = '' } = {}) {
       return;
     }
     const meta = loadSyncMeta();
+    const firstCloudSync = !meta.lastSyncedAt && !meta.lastCloudModifiedAt;
+    if (firstCloudSync) {
+      const hasLocalScheduleData = state.entries.length > 0
+        || Object.keys(state.deletedEntryIds || {}).length > 0
+        || Object.keys(state.deletedReceiptIds || {}).length > 0;
+      state = mergeFirebaseState(remotePayload, { preferRemoteSettings: true });
+      saveState();
+      if (hasLocalScheduleData) {
+        const payload = firebaseSyncPayload();
+        await window.NinqFirebaseCloud.writeState(payload);
+        rememberDriveSync(payload);
+      } else {
+        rememberDriveSync(remotePayload);
+      }
+      saveSyncPending(false);
+      renderAll();
+      setSyncLog(`初回同期が完了しました。クラウド設定を受け取り、予定${state.entries.length}件を統合しました`);
+      return;
+    }
     const remoteModifiedAt = remotePayloadModifiedAt(remotePayload);
     const remoteChanged = isAfterDate(remoteModifiedAt, meta.lastCloudModifiedAt);
     const localChanged = hasLocalChangesSinceSync();
@@ -2288,12 +2328,12 @@ function mergeItemsWithDeletes(localItems = [], remoteItems = [], localDeleted =
     return !deletedAt || itemAt > deletedAt;
   });
 }
-function mergeDriveState(remotePayload) {
+function mergeDriveState(remotePayload, { preferRemoteSettings = false } = {}) {
   const remoteState = normalizeState(remotePayload.state || remotePayload);
   const deletedEntryIds = mergeDeletedEntryIds(state.deletedEntryIds, remoteState.deletedEntryIds);
   const deletedReceiptIds = mergeDeletedEntryIds(state.deletedReceiptIds, remoteState.deletedReceiptIds);
   return normalizeState({
-    settings: mergeSettingsBySection(state.settings, remoteState.settings),
+    settings: preferRemoteSettings ? remoteState.settings : mergeSettingsBySection(state.settings, remoteState.settings),
     entries: mergeEntriesWithDeletes(state.entries, remoteState.entries, state.deletedEntryIds, remoteState.deletedEntryIds),
     receipts: [],
     deletedEntryIds,
@@ -3121,7 +3161,6 @@ function bindEvents() {
   document.getElementById('modal-bg').addEventListener('click', (event) => { if (event.target.id === 'modal-bg') closeModal(); });
   document.addEventListener('click', (event) => {
     if (event.target.id === 'expense-quick-edit-bg' || event.target.closest('[data-expense-quick-cancel]')) { closeExpenseQuickEdit(); return; }
-    if (event.target.closest('[data-expense-quick-save]')) { saveExpenseQuickEdit(); return; }
     const expenseChip = event.target.closest('[data-expense-entry-id][data-expense-id]');
     if (expenseChip) { openExpenseQuickEdit(expenseChip.dataset.expenseEntryId, expenseChip.dataset.expenseId); return; }
     if (event.target.id === 'date-picker-bg' || event.target.matches('[data-date-picker-cancel]')) { closeDatePicker(); return; }
