@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.01-1';
+const APP_VERSION = 'v2026.09.01-2';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -2968,10 +2968,50 @@ function flushSettingsAutosave() {
   settingsAutosaveTimer = null;
   persistSettingsFromForm({ render: false, sections: targetSections });
 }
+function createStampImageData(file, maxDimension = 480, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    if (!file || (file.type && !file.type.startsWith('image/'))) {
+      reject(new Error('画像ファイルを選択してください'));
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    const release = () => URL.revokeObjectURL(objectUrl);
+    image.onload = () => {
+      try {
+        const sourceWidth = image.naturalWidth || image.width;
+        const sourceHeight = image.naturalHeight || image.height;
+        if (!sourceWidth || !sourceHeight) throw new Error('画像の大きさを確認できませんでした');
+        const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
+        const width = Math.max(1, Math.round(sourceWidth * scale));
+        const height = Math.max(1, Math.round(sourceHeight * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('画像を変換できませんでした');
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = 'high';
+        context.drawImage(image, 0, 0, width, height);
+        const webp = canvas.toDataURL('image/webp', quality);
+        resolve(webp.startsWith('data:image/webp') ? webp : canvas.toDataURL('image/png'));
+      } catch (error) {
+        reject(error);
+      } finally {
+        release();
+      }
+    };
+    image.onerror = () => {
+      release();
+      reject(new Error('印鑑画像を読み込めませんでした'));
+    };
+    image.src = objectUrl;
+  });
+}
 async function handleStampFile(file) {
   if (!file) return;
   try {
-    state.settings.stampImage = await createCompressedImageData(file, 480, 0.72);
+    state.settings.stampImage = await createStampImageData(file);
     markSettingsSections('invoice');
     saveState();
     renderAll();
