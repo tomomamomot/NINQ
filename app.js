@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.01-3';
+const APP_VERSION = 'v2026.09.01-4';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -694,7 +694,7 @@ function dayEntries(ymd) { return state.entries.filter((entry) => entry.date ===
 function calcEntry(entry) {
   const isContract = entry?.billingType === 'contract';
   const contractAnchor = isContract && isContractBillingAnchor(entry);
-  const qty = isContract ? 0 : qtyValue(entry.qty), unitRate = isContract ? 0 : num(entry.unitRate), otHours = isContract ? 0 : num(entry.otHours), otRate = isContract ? 0 : num(entry.otRate);
+  const qty = isContract ? 0 : qtyValue(entry.qty), unitRate = isContract ? 0 : num(entry.unitRate), otHours = isContract ? 0 : num(entry.otHours), otRate = isContract || !otHours ? 0 : num(entry.otRate);
   const labor = qty * unitRate, overtime = otHours * otRate;
   const contractAmount = contractAnchor ? num(entry.contractAmount) : 0;
   const expenses = expenseItems().reduce((sum, item) => sum + num(entry.expenses?.[item.id]), 0);
