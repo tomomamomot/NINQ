@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.01-11';
+const APP_VERSION = 'v2026.09.01-12';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -1407,6 +1407,41 @@ function dayInvoiceSummary(entries, day, expenseColumns) {
   const total = labor + contract + overtime + expenses.reduce((sum, value) => sum + value, 0);
   return { dayItems, sites, qty, unitRate, labor, contract, otHours, otRate, overtime, expenses, total };
 }
+function mergeDemenSelfAndSubEntries(entries) {
+  const groups = new Map();
+  const output = [];
+  entries.forEach((entry) => {
+    if (entry.billingType === 'contract') {
+      output.push(entry);
+      return;
+    }
+    const calc = calcEntry(entry);
+    const key = [entry.date, entry.company, entry.site, entry.shift, calc.unitRate, calc.otRate].join('\u001f');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  });
+  groups.forEach((items) => {
+    const types = new Set(items.map((entry) => entry.type));
+    if (!types.has('self') || !types.has('sub')) {
+      output.push(...items);
+      return;
+    }
+    const expenseIds = new Set(items.flatMap((entry) => Object.keys(entry.expenses || {})));
+    const expenses = Object.fromEntries([...expenseIds].map((id) => [id, sumBy(items, (entry) => num(entry.expenses?.[id]))]));
+    output.push({
+      ...items[0],
+      id: items.map((entry) => entry.id).join('+'),
+      type: 'self',
+      workerName: '',
+      qty: sumBy(items, (entry) => calcEntry(entry).qty),
+      otHours: sumBy(items, (entry) => calcEntry(entry).otHours),
+      expenses,
+      createdAt: items.map((entry) => entry.createdAt || '').filter(Boolean).sort()[0] || items[0].createdAt,
+      updatedAt: items.map((entry) => entry.updatedAt || '').filter(Boolean).sort().at(-1) || items[0].updatedAt,
+    });
+  });
+  return output.sort(sortEntriesForDemen);
+}
 function buildDemenSheet(entries, totals, hidden) {
   const expenseColumns = totals.expenses;
   const demenFontSize = fontSizeLevel(state.settings.invoiceFontSize);
@@ -1426,9 +1461,7 @@ function buildDemenSheet(entries, totals, hidden) {
   const bodyRows = billingDates.map((date) => {
     const parsed = fromYmd(date);
     const day = spansMonths ? `${parsed.getMonth() + 1}/${parsed.getDate()}` : parsed.getDate();
-    const dayItems = entries
-      .filter((entry) => entry.date === date)
-      .sort(sortEntriesForDemen);
+    const dayItems = mergeDemenSelfAndSubEntries(entries.filter((entry) => entry.date === date));
     return dayItems.length ? dayItems.map((entry, entryIndex) => demenRow(entryIndex === 0 ? day : null, entry, dayItems.length)).join('') : demenRow(day);
   }).join('');
   return `
