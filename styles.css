@@ -174,7 +174,7 @@ input[type="number"]{appearance:textfield;-moz-appearance:textfield}
 .invoice-to span{flex:1;min-height:24px}
 .invoice-message{font-size:13px;margin:12px 0 18px}
 .invoice-sender{display:grid;gap:3px;min-height:0;font-size:12px;line-height:1.35;text-align:left}
-.invoice-sender-heading{display:flex;gap:10px;align-items:flex-start;min-height:70px}
+.invoice-sender-heading{display:flex;justify-content:flex-end;gap:10px;align-items:flex-start;min-height:70px}
 .invoice-sender-identity{display:grid;flex:0 1 auto;gap:3px;min-width:0}
 .invoice-sender strong{font-size:14px;font-weight:800;overflow-wrap:anywhere}
 .invoice-sender-postal{white-space:nowrap}
