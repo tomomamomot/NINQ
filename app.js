@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.01-7';
+const APP_VERSION = 'v2026.09.01-8';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -570,7 +570,17 @@ function mergeCompanyPresetLists(localSettings, remoteSettings) {
     .map(({ _time, ...preset }) => preset)
     .sort((a, b) => a.name.localeCompare(b.name, 'ja'));
 }
-function mergeSettingsBySection(localSettings, remoteSettings) {
+const NONEMPTY_PROTECTED_SETTING_KEYS = new Set([
+  'name', 'postalCode', 'address', 'tel', 'companyName',
+  'bank', 'branch', 'accountNo', 'accountName',
+  'invoiceNo', 'stampImage',
+]);
+function hasMeaningfulSettingValue(value) {
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return value !== null && value !== undefined;
+}
+function mergeSettingsBySection(localSettings, remoteSettings, { preferRemoteOnTie = false } = {}) {
   const local = normalizeState({ settings: localSettings }).settings;
   const remote = normalizeState({ settings: remoteSettings }).settings;
   const merged = { ...local };
@@ -582,14 +592,26 @@ function mergeSettingsBySection(localSettings, remoteSettings) {
       merged.deletedCompanyPresetIds = mergeTimestampMaps(local.deletedCompanyPresetIds, remote.deletedCompanyPresetIds);
       return;
     }
-    const source = settingsSectionTime(remote, section) > settingsSectionTime(local, section) ? remote : local;
-    keys.forEach((key) => { merged[key] = clone(source[key]); });
+    const localTime = settingsSectionTime(local, section);
+    const remoteTime = settingsSectionTime(remote, section);
+    const remoteWins = remoteTime > localTime || (preferRemoteOnTie && remoteTime === localTime);
+    const source = remoteWins ? remote : local;
+    const fallback = remoteWins ? local : remote;
+    keys.forEach((key) => {
+      const sourceValue = source[key];
+      const fallbackValue = fallback[key];
+      const preserveFallback = NONEMPTY_PROTECTED_SETTING_KEYS.has(key)
+        && !hasMeaningfulSettingValue(sourceValue)
+        && hasMeaningfulSettingValue(fallbackValue);
+      merged[key] = clone(preserveFallback ? fallbackValue : sourceValue);
+    });
   });
   merged.settingUpdatedAt = { ...(local.settingUpdatedAt || {}) };
   Object.keys(SETTINGS_SECTIONS).forEach((section) => {
     const localTime = settingsSectionTime(local, section);
     const remoteTime = settingsSectionTime(remote, section);
-    merged.settingUpdatedAt[section] = remoteTime > localTime ? remote.settingUpdatedAt?.[section] || remote.updatedAt || '' : local.settingUpdatedAt?.[section] || local.updatedAt || '';
+    const remoteWins = remoteTime > localTime || (preferRemoteOnTie && remoteTime === localTime);
+    merged.settingUpdatedAt[section] = remoteWins ? remote.settingUpdatedAt?.[section] || remote.updatedAt || '' : local.settingUpdatedAt?.[section] || local.updatedAt || '';
   });
   merged.updatedAt = new Date(Math.max(Date.parse(local.updatedAt || '') || 0, Date.parse(remote.updatedAt || '') || 0, ...Object.values(merged.settingUpdatedAt).map((value) => Date.parse(value || '') || 0))).toISOString();
   return merged;
@@ -1926,7 +1948,7 @@ function mergeFirebaseState(remotePayload, options = {}) {
   return mergeDriveState(remotePayload, options);
 }
 function applyRemoteFirebaseState(remotePayload) {
-  state = normalizeState(remotePayload.state || remotePayload);
+  state = mergeFirebaseState(remotePayload);
   saveState();
   rememberDriveSync(remotePayload);
   saveSyncPending(false);
@@ -2021,18 +2043,11 @@ async function syncFirebaseCloud({ auto = false, reason = '' } = {}) {
     const meta = loadSyncMeta();
     const firstCloudSync = !meta.lastSyncedAt && !meta.lastCloudModifiedAt;
     if (firstCloudSync) {
-      const hasLocalScheduleData = state.entries.length > 0
-        || Object.keys(state.deletedEntryIds || {}).length > 0
-        || Object.keys(state.deletedReceiptIds || {}).length > 0;
       state = mergeFirebaseState(remotePayload, { preferRemoteSettings: true });
       saveState();
-      if (hasLocalScheduleData) {
-        const payload = firebaseSyncPayload();
-        await window.NinqFirebaseCloud.writeState(payload);
-        rememberDriveSync(payload);
-      } else {
-        rememberDriveSync(remotePayload);
-      }
+      const payload = firebaseSyncPayload();
+      await window.NinqFirebaseCloud.writeState(payload);
+      rememberDriveSync(payload);
       saveSyncPending(false);
       renderAll();
       setSyncLog(`初回同期が完了しました。クラウド設定を受け取り、予定${state.entries.length}件を統合しました`);
@@ -2054,7 +2069,13 @@ async function syncFirebaseCloud({ auto = false, reason = '' } = {}) {
       return;
     }
     if (remoteChanged && !localChanged) {
-      applyRemoteFirebaseState(remotePayload);
+      state = mergeFirebaseState(remotePayload);
+      saveState();
+      const payload = firebaseSyncPayload();
+      await window.NinqFirebaseCloud.writeState(payload);
+      rememberDriveSync(payload);
+      saveSyncPending(false);
+      renderAll();
       setSyncLog(`NINQクラウドから最新データを取得しました。予定 ${state.entries.length}件`);
       return;
     }
@@ -2339,7 +2360,7 @@ function mergeDriveState(remotePayload, { preferRemoteSettings = false } = {}) {
   const deletedEntryIds = mergeDeletedEntryIds(state.deletedEntryIds, remoteState.deletedEntryIds);
   const deletedReceiptIds = mergeDeletedEntryIds(state.deletedReceiptIds, remoteState.deletedReceiptIds);
   return normalizeState({
-    settings: preferRemoteSettings ? remoteState.settings : mergeSettingsBySection(state.settings, remoteState.settings),
+    settings: mergeSettingsBySection(state.settings, remoteState.settings, { preferRemoteOnTie: preferRemoteSettings }),
     entries: mergeEntriesWithDeletes(state.entries, remoteState.entries, state.deletedEntryIds, remoteState.deletedEntryIds),
     receipts: [],
     deletedEntryIds,
@@ -2347,7 +2368,7 @@ function mergeDriveState(remotePayload, { preferRemoteSettings = false } = {}) {
   });
 }
 function applyRemoteDriveState(remotePayload) {
-  state = normalizeState(remotePayload.state || remotePayload);
+  state = mergeDriveState(remotePayload);
   saveState();
   rememberDriveSync(remotePayload);
   saveSyncPending(false);
