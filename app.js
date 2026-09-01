@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.01-10';
+const APP_VERSION = 'v2026.09.01-11';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -1319,12 +1319,20 @@ function buildInvoiceSheet(entries, totals, hidden) {
   const laborGroups = [
     { label: '別紙出面表参照', entries: entries.filter((entry) => entry.billingType !== 'contract' && entry.shift !== 'night') },
     { label: '夜間', night: true, entries: entries.filter((entry) => entry.billingType !== 'contract' && entry.shift === 'night') },
-  ].filter((group) => group.entries.length);
+  ].filter((group) => group.entries.length).flatMap((group) => {
+    const rateGroups = new Map();
+    group.entries.forEach((entry) => {
+      const rate = calcEntry(entry).unitRate;
+      const key = String(rate);
+      if (!rateGroups.has(key)) rateGroups.set(key, { ...group, rate, entries: [] });
+      rateGroups.get(key).entries.push(entry);
+    });
+    return [...rateGroups.values()];
+  });
   const laborRows = laborGroups.map((group, index) => {
-    const rates = [...new Set(group.entries.map((entry) => calcEntry(entry).unitRate).filter(Boolean))];
     const qty = sumBy(group.entries, (entry) => calcEntry(entry).qty);
     const labor = sumBy(group.entries, (entry) => calcEntry(entry).labor);
-    return `<tr class="${group.night ? 'invoice-night-row' : ''}"><td>${index === 0 ? `${cursor.getMonth() + 1}月` : ''}</td><td colspan="2" class="left">${group.label}</td><td>${qty ? qtyLabel(qty) : ''}</td><td>人工</td><td class="right">${rates.length === 1 ? yenPlain(rates[0], hidden) : ''}</td><td class="right">${labor ? yenPlain(labor, hidden) : ''}</td><td></td></tr>`;
+    return `<tr class="${group.night ? 'invoice-night-row' : ''}"><td>${index === 0 ? `${cursor.getMonth() + 1}月` : ''}</td><td colspan="2" class="left">${group.label}</td><td>${qty ? qtyLabel(qty) : ''}</td><td>人工</td><td class="right">${group.rate ? yenPlain(group.rate, hidden) : ''}</td><td class="right">${labor ? yenPlain(labor, hidden) : ''}</td><td></td></tr>`;
   }).join('');
   const contractRows = entries.filter((entry) => entry.billingType === 'contract' && calcEntry(entry).contractAnchor).map((entry, index) => {
     const amount = calcEntry(entry).contractAmount;
