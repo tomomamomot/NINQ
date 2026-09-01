@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.01-6';
+const APP_VERSION = 'v2026.09.01-7';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -1631,8 +1631,8 @@ function renderSyncScreen() {
   const rangeEnd = document.getElementById('google-export-end');
   if (rangeStart && !rangeStart.value) rangeStart.value = toYmd(new Date(cursor.getFullYear(), cursor.getMonth(), 1));
   if (rangeEnd && !rangeEnd.value) rangeEnd.value = toYmd(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0));
-  const rangeEntries = calendarRangeEntries();
-  const calendarCount = document.getElementById('calendar-export-count'); if (calendarCount) calendarCount.textContent = `${calendarExportGroups(rangeEntries).length}件`;
+  const rangeValues = calendarRangeValues();
+  const calendarCount = document.getElementById('calendar-export-count'); if (calendarCount) calendarCount.textContent = `${calendarRangeGroups(rangeValues.start, rangeValues.end).length}件`;
   const backupStatus = document.getElementById('backup-status'); if (backupStatus) backupStatus.textContent = `${state.entries.length}予定`;
   const clientInput = document.getElementById('google-client-id'); if (clientInput && !clientInput.value) clientInput.value = state.settings.googleClientId || '';
   const autoSync = document.getElementById('google-auto-sync'); if (autoSync) autoSync.checked = !!state.settings.googleSyncEnabled;
@@ -2588,6 +2588,23 @@ function calendarExportGroups(entries) {
   });
   return groups.sort((a, b) => a.start.localeCompare(b.start) || companyEventTitle(a.entries[0]).localeCompare(companyEventTitle(b.entries[0]), 'ja'));
 }
+function calendarGroupOverlapsRange(group, start, end) {
+  return !!group && !!start && !!end && group.start <= end && group.end >= start;
+}
+function calendarGroupExportSignature(group) {
+  return [group.start, group.end, calendarExportKey(group.entries[0]), calendarGroupDescription(group)].join('\u001f');
+}
+function calendarRangeGroups(start, end) {
+  if (!start || !end || end < start) return [];
+  const seen = new Set();
+  return calendarExportGroups(state.entries).filter((group) => {
+    if (!calendarGroupOverlapsRange(group, start, end)) return false;
+    const signature = calendarGroupExportSignature(group);
+    if (seen.has(signature)) return false;
+    seen.add(signature);
+    return true;
+  });
+}
 function calendarGroupDescription(group) {
   const base = calendarDescription(group.entries[0]);
   return group.entries.length > 1 ? `${base}\n期間: ${group.start}〜${group.end}` : base;
@@ -2617,6 +2634,17 @@ function base32HexHash(text) {
   } while (hash);
   return out.padStart(7, '0');
 }
+function calendarGroupSourceMarker(group) {
+  const rangeIds = [...new Set(group.entries.map((entry) => String(entry.rangeGroupId || '').trim()).filter(Boolean))];
+  const source = rangeIds.length === 1
+    ? `range:${rangeIds[0]}`
+    : `entries:${group.entries.map((entry) => entry.id).sort().join('|')}`;
+  return `g${base32HexHash(source)}${base32HexHash(source.split('').reverse().join(''))}`;
+}
+function calendarGroupLogicalMarker(group) {
+  const source = calendarExportKey(group.entries[0]);
+  return `k${base32HexHash(source)}${base32HexHash(source.split('').reverse().join(''))}`;
+}
 function calendarEventId(group) {
   const raw = [group.start, group.end, calendarExportKey(group.entries[0]), group.entries.map((entry) => entry.id).join('|')].join('|');
   return `ninq${base32HexHash(raw)}${base32HexHash(raw.split('').reverse().join(''))}`;
@@ -2629,7 +2657,12 @@ function calendarEventBody(group) {
     start: { date: group.start },
     end: { date: toYmd(endDate) },
     colorId: calendarExportColorId(group),
-    extendedProperties: { private: { app: 'NINQ', ninqRange: `${group.start}_${group.end}` } },
+    extendedProperties: { private: {
+      app: 'NINQ',
+      ninqRange: `${group.start}_${group.end}`,
+      ninqGroup: calendarGroupSourceMarker(group),
+      ninqKey: calendarGroupLogicalMarker(group),
+    } },
   };
 }
 function calendarGroupEndExclusive(group) {
@@ -2662,7 +2695,7 @@ async function listNinqGoogleCalendarEvents(calendarId, start, end) {
       timeMin: `${start}T00:00:00+09:00`,
       timeMax: `${calendarRangeEndExclusive(end)}T00:00:00+09:00`,
       privateExtendedProperty: 'app=NINQ',
-      fields: 'nextPageToken,items(id,summary,start,end,extendedProperties)',
+      fields: 'nextPageToken,items(id,summary,description,start,end,extendedProperties)',
     });
     if (pageToken) params.set('pageToken', pageToken);
     const response = await calendarFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodedCalendarId}/events?${params.toString()}`);
@@ -2673,14 +2706,51 @@ async function listNinqGoogleCalendarEvents(calendarId, start, end) {
   } while (pageToken);
   return events;
 }
-function staleNinqGoogleCalendarEvents(events, groups, start, end) {
-  const rangeEnd = calendarRangeEndExclusive(end);
-  const remaining = events.filter((event) => event?.start?.date >= start && event?.end?.date <= rangeEnd);
+function googleCalendarEventOverlapsRange(event, start, end) {
+  return !!event?.start?.date && !!event?.end?.date
+    && event.start.date < calendarRangeEndExclusive(end)
+    && event.end.date > start;
+}
+function googleCalendarEventOverlapsGroup(event, group) {
+  return !!event?.start?.date && !!event?.end?.date
+    && event.start.date < calendarGroupEndExclusive(group)
+    && event.end.date > group.start;
+}
+function calendarDescriptionFingerprint(value) {
+  return String(value || '').replace(/\n期間:.*$/u, '').trim();
+}
+function googleCalendarEventMatchScore(event, group) {
+  if (!isNinqGoogleCalendarEvent(event)) return -1;
+  const privateProps = event?.extendedProperties?.private || {};
+  if (privateProps.ninqGroup && privateProps.ninqGroup === calendarGroupSourceMarker(group)) return 500;
+  if (isSameGoogleCalendarEvent(event, group)) return 400;
+  if (!googleCalendarEventOverlapsGroup(event, group)) return -1;
+  if (privateProps.ninqKey && privateProps.ninqKey === calendarGroupLogicalMarker(group)) return 300;
+  if (event?.summary === calendarExportTitle(group)
+    && calendarDescriptionFingerprint(event?.description) === calendarDescriptionFingerprint(calendarDescription(group.entries[0]))) return 200;
+  return -1;
+}
+function reconcileNinqGoogleCalendarEvents(events, groups, start, end) {
+  const remaining = events.filter((event) => googleCalendarEventOverlapsRange(event, start, end));
+  const assignments = new Map();
   groups.forEach((group) => {
-    const index = remaining.findIndex((event) => isSameGoogleCalendarEvent(event, group));
-    if (index >= 0) remaining.splice(index, 1);
+    let bestIndex = -1;
+    let bestScore = -1;
+    remaining.forEach((event, index) => {
+      const score = googleCalendarEventMatchScore(event, group);
+      if (score > bestScore) { bestIndex = index; bestScore = score; }
+    });
+    if (bestIndex < 0) return;
+    assignments.set(group, remaining[bestIndex]);
+    remaining.splice(bestIndex, 1);
   });
-  return remaining;
+  const duplicates = [];
+  const stale = [];
+  remaining.forEach((event) => {
+    const duplicate = groups.some((group) => googleCalendarEventMatchScore(event, group) >= 200);
+    (duplicate ? duplicates : stale).push(event);
+  });
+  return { assignments, duplicates, stale };
 }
 async function deleteGoogleCalendarEvent(calendarId, eventId) {
   const encodedCalendarId = encodeURIComponent(calendarId || 'primary');
@@ -2713,9 +2783,10 @@ async function updateGoogleCalendarEvent(calendarId, eventId, group) {
   await response.json();
   return 'updated';
 }
-async function upsertGoogleCalendarEvent(calendarId, group) {
+async function upsertGoogleCalendarEvent(calendarId, group, assignedEvent = null) {
   const eventId = calendarEventId(group);
   const encodedCalendarId = encodeURIComponent(calendarId || 'primary');
+  if (assignedEvent?.id) return updateGoogleCalendarEvent(calendarId, assignedEvent.id, group);
   const existing = await findExistingGoogleCalendarEvent(calendarId, group);
   if (existing) return updateGoogleCalendarEvent(calendarId, existing.id, group);
   const insertBody = { ...calendarEventBody(group), id: eventId };
@@ -2756,25 +2827,28 @@ function calendarRangeValues() {
     end: document.getElementById('google-export-end')?.value || monthEnd,
   };
 }
-function calendarRangeEntries() {
-  const { start, end } = calendarRangeValues();
-  if (!start || !end || end < start) return [];
-  return state.entries.filter((entry) => entry.date >= start && entry.date <= end).sort((a, b) => a.date.localeCompare(b.date));
-}
 async function exportRangeCalendarIcs() {
   const { start, end } = calendarRangeValues();
   if (!start || !end) { setSyncLog('開始日と終了日を選んでください'); return; }
   if (end < start) { setSyncLog('終了日は開始日以降にしてください'); return; }
-  const entries = calendarRangeEntries();
-  const groups = calendarExportGroups(entries);
+  const groups = calendarRangeGroups(start, end);
   try {
     saveGoogleSettings({ feedback: false, render: false, touch: false });
     await getCalendarToken('select_account');
     const calendarId = state.settings.googleCalendarId || 'primary';
     setSyncLog('Googleカレンダー上のNINQ予定を確認中です...');
     const googleEvents = await listNinqGoogleCalendarEvents(calendarId, start, end);
-    const staleEvents = staleNinqGoogleCalendarEvents(googleEvents, groups, start, end);
-    const result = { created: 0, updated: 0, deleted: 0, kept: 0 };
+    const reconciliation = reconcileNinqGoogleCalendarEvents(googleEvents, groups, start, end);
+    const staleEvents = reconciliation.stale;
+    const result = { created: 0, updated: 0, deleted: 0, cleaned: 0, kept: 0 };
+    if (reconciliation.duplicates.length) {
+      setSyncLog(`${reconciliation.duplicates.length}件の重複したNINQ予定を整理中です...`);
+      for (const event of reconciliation.duplicates) {
+        await deleteGoogleCalendarEvent(calendarId, event.id);
+        result.deleted += 1;
+        result.cleaned += 1;
+      }
+    }
     if (staleEvents.length) {
       const shouldDelete = confirm(`NINQで削除・変更されたGoogleカレンダー予定が${staleEvents.length}件あります。Googleカレンダーからも削除しますか？\n\nGoogle側で手入力した予定は削除されません。`);
       if (shouldDelete) {
@@ -2789,12 +2863,14 @@ async function exportRangeCalendarIcs() {
     }
     setSyncLog(`${groups.length}件をGoogleカレンダーへ登録・更新中です...`);
     for (const group of groups) {
-      const status = await upsertGoogleCalendarEvent(calendarId, group);
+      const status = await upsertGoogleCalendarEvent(calendarId, group, reconciliation.assignments.get(group));
       if (status === 'created') result.created += 1;
       else result.updated += 1;
     }
     const keptText = result.kept ? ` / 削除せず残した予定${result.kept}件` : '';
-    setSyncLog(`${start}〜${end}をGoogleカレンダーへ反映しました。新規${result.created}件 / 更新${result.updated}件 / 削除${result.deleted}件${keptText}`);
+    const cleanedText = result.cleaned ? ` / 重複整理${result.cleaned}件` : '';
+    const removedText = result.deleted > result.cleaned ? ` / 削除${result.deleted - result.cleaned}件` : '';
+    setSyncLog(`${start}〜${end}をGoogleカレンダーへ反映しました。新規${result.created}件 / 更新${result.updated}件${cleanedText}${removedText}${keptText}`);
     renderSyncScreen();
   } catch (error) {
     setSyncLog(error.message || 'Googleカレンダー登録に失敗しました');
