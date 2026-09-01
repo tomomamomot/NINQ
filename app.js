@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.01-5';
+const APP_VERSION = 'v2026.09.01-6';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -1329,12 +1329,12 @@ function buildInvoiceSheet(entries, totals, hidden) {
                 <div class="invoice-sender-identity">
                   <strong>${escapeHtml(s.companyName || s.name || '')}</strong>
                   ${senderPostal ? `<span class="invoice-sender-postal">${senderPostal}</span>` : ''}
+                  ${senderAddress ? `<span class="invoice-sender-address">${senderAddress}</span>` : ''}
+                  ${s.tel ? `<span>TEL ${escapeHtml(s.tel)}</span>` : ''}
+                  ${s.invoiceNo ? `<span>登録番号：${escapeHtml(s.invoiceNo)}</span>` : ''}
                 </div>
                 ${stamp}
               </div>
-              ${senderAddress ? `<span class="invoice-sender-address">${senderAddress}</span>` : ''}
-              ${s.tel ? `<span>TEL ${escapeHtml(s.tel)}</span>` : ''}
-              ${s.invoiceNo ? `<span>登録番号：${escapeHtml(s.invoiceNo)}</span>` : ''}
             </div>
           </div>
         </div>
