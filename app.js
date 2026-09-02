@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.01-12';
+const APP_VERSION = 'v2026.09.03-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -573,7 +573,7 @@ function mergeCompanyPresetLists(localSettings, remoteSettings) {
 const NONEMPTY_PROTECTED_SETTING_KEYS = new Set([
   'name', 'postalCode', 'address', 'tel', 'companyName',
   'bank', 'branch', 'accountNo', 'accountName',
-  'invoiceNo', 'stampImage',
+  'invoiceNo', 'stampImage', 'googleClientId',
 ]);
 function hasMeaningfulSettingValue(value) {
   if (typeof value === 'string') return value.trim().length > 0;
@@ -1648,6 +1648,7 @@ function renderSyncScreen() {
   const sub = document.getElementById('sync-sub'); if (sub) sub.textContent = '出力と引き継ぎ';
   const syncTopTitle = document.querySelector('#sc-sync .topbar-title'); if (syncTopTitle) syncTopTitle.textContent = '同期・連携';
   if (sub) sub.textContent = firebaseUser ? '自動同期中' : '初回ログインのみ';
+  const calendarSection = document.querySelector('#sc-sync .sync-section:nth-of-type(1)');
   const cloudSection = document.querySelector('#sc-sync .sync-section:nth-of-type(2)');
   if (cloudSection) {
     cloudSection.classList.add('cloud-sync-section');
@@ -1670,13 +1671,29 @@ function renderSyncScreen() {
   const loginButton = document.getElementById('google-login-btn'); if (loginButton) { loginButton.textContent = firebaseUser ? 'ログイン済み' : 'NINQクラウドにログイン'; loginButton.disabled = !!firebaseUser; loginButton.classList.toggle('cloud-login-done', !!firebaseUser); }
   const sendButton = document.getElementById('drive-send-device-btn'); if (sendButton) sendButton.textContent = 'この端末から送る';
   const receiveButton = document.getElementById('drive-receive-device-btn'); if (receiveButton) receiveButton.textContent = 'NINQクラウドから受け取る';
-  const saveSyncButton = document.getElementById('save-google-settings-btn'); if (saveSyncButton) saveSyncButton.textContent = '同期設定を保存';
+  const saveSyncButton = document.getElementById('save-google-settings-btn'); if (saveSyncButton) saveSyncButton.textContent = 'Googleカレンダー設定を保存';
   const clientField = document.getElementById('google-client-id')?.closest('.sync-field');
   const conflictField = document.getElementById('google-conflict-mode')?.closest('.sync-field');
-  clientField?.classList.add('cloud-hidden-setting');
   autoSyncLabel?.classList.add('cloud-hidden-setting');
   conflictField?.classList.add('cloud-hidden-setting');
-  saveSyncButton?.classList.add('cloud-hidden-setting');
+  clientField?.classList.remove('cloud-hidden-setting');
+  saveSyncButton?.classList.remove('cloud-hidden-setting');
+  if (calendarSection && clientField && saveSyncButton) {
+    let authDetails = calendarSection.querySelector('.calendar-auth-details');
+    if (!authDetails) {
+      authDetails = document.createElement('details');
+      authDetails.className = 'calendar-auth-details';
+      authDetails.innerHTML = '<summary>Googleカレンダー接続設定</summary><div class="calendar-auth-fields"></div>';
+      calendarSection.appendChild(authDetails);
+    }
+    const authFields = authDetails.querySelector('.calendar-auth-fields');
+    if (authFields && !authFields.contains(clientField)) authFields.appendChild(clientField);
+    if (authFields && !authFields.contains(saveSyncButton)) authFields.appendChild(saveSyncButton);
+    const configured = !!String(state.settings.googleClientId || '').trim();
+    const summary = authDetails.querySelector('summary');
+    if (summary) summary.textContent = configured ? 'Googleカレンダー接続設定' : 'Googleカレンダー接続設定が必要です';
+    if (!configured) authDetails.open = true;
+  }
   if (cloudSection && sendButton && receiveButton) {
     let manual = cloudSection.querySelector('.cloud-manual-details');
     if (!manual) {
@@ -1688,7 +1705,6 @@ function renderSyncScreen() {
     const manualActions = manual.querySelector('.cloud-manual-actions');
     if (manualActions && !manualActions.contains(sendButton)) manualActions.appendChild(sendButton);
     if (manualActions && !manualActions.contains(receiveButton)) manualActions.appendChild(receiveButton);
-    if (manualActions && saveSyncButton && !manualActions.contains(saveSyncButton)) manualActions.appendChild(saveSyncButton);
   }
   const rangeStart = document.getElementById('google-export-start');
   const rangeEnd = document.getElementById('google-export-end');
@@ -1973,7 +1989,12 @@ function upsertEntries(entries) {
   saveState(); renderAll(); scheduleDriveAutoSync();
 }
 function saveGoogleSettings({ feedback = true, render = true, touch = true } = {}) {
-  state.settings.googleClientId = document.getElementById('google-client-id')?.value.trim() || '';
+  const clientInput = document.getElementById('google-client-id');
+  const enteredClientId = String(clientInput?.value || '').replace(/\s+/g, '');
+  if (enteredClientId) {
+    state.settings.googleClientId = enteredClientId;
+    if (clientInput) clientInput.value = enteredClientId;
+  }
   state.settings.googleCalendarId = document.getElementById('google-calendar-id')?.value.trim() || 'primary';
   state.settings.googleStoreMode = document.getElementById('google-store-mode')?.value || 'local';
   state.settings.googleSyncEnabled = !!document.getElementById('google-auto-sync')?.checked;
