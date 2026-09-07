@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.03-1';
+const APP_VERSION = 'v2026.09.07-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -2650,7 +2650,7 @@ function calendarExportKey(entry) {
 }
 function calendarExportGroups(entries) {
   const byKey = new Map();
-  entries.forEach((entry) => {
+  entries.filter((entry) => entry.type === 'self').forEach((entry) => {
     const key = calendarExportKey(entry);
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key).push(entry);
@@ -2742,6 +2742,7 @@ function calendarEventBody(group) {
     colorId: calendarExportColorId(group),
     extendedProperties: { private: {
       app: 'NINQ',
+      ninqType: 'self',
       ninqRange: `${group.start}_${group.end}`,
       ninqGroup: calendarGroupSourceMarker(group),
       ninqKey: calendarGroupLogicalMarker(group),
@@ -2960,8 +2961,8 @@ async function exportRangeCalendarIcs() {
   }
 }
 function openSelectedDayGoogleCalendar() {
-  const entries = dayEntries(selectedDate);
-  if (!entries.length) { setSyncLog('選択日の予定がありません'); return; }
+  const entries = dayEntries(selectedDate).filter((entry) => entry.type === 'self');
+  if (!entries.length) { setSyncLog('選択日に自分の予定がありません'); return; }
   window.open(googleCalendarUrl(entries[0]), '_blank');
   setSyncLog(entries.length > 1 ? '選択日の先頭予定をGoogleカレンダーで開きました' : '選択日の予定をGoogleカレンダーで開きました');
 }
