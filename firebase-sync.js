@@ -15,7 +15,7 @@ import {
   persistentSingleTabManager,
   doc,
   getDoc,
-  setDoc,
+  runTransaction,
   serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js';
 
@@ -55,9 +55,9 @@ function emit(name, detail = {}) {
   window.dispatchEvent(new CustomEvent(name, { detail }));
 }
 
-function stateRef(user = currentUser) {
-  if (!user) throw new Error('NINQクラウドにログインしてください');
-  return doc(db, 'users', user.uid, 'state', 'main');
+function stateRef(uid) {
+  if (!uid || currentUser?.uid !== uid) throw new Error('ログイン状態が変わりました');
+  return doc(db, 'users', uid, 'state', 'main');
 }
 
 async function signIn() {
@@ -73,19 +73,35 @@ async function signIn() {
   }
 }
 
-async function readState() {
-  const snapshot = await getDoc(stateRef());
+async function readState({uid} = {}) {
+  const snapshot = await getDoc(stateRef(uid));
+  if (currentUser?.uid !== uid) throw new Error('ログイン状態が変わりました');
   if (!snapshot.exists()) return null;
   return snapshot.data()?.payload || null;
 }
 
-async function writeState(payload) {
-  await setDoc(stateRef(), {
-    payload,
-    modifiedAt: payload?.modifiedAt || '',
-    syncedAt: new Date().toISOString(),
-    appVersion: payload?.appVersion || '',
-    updatedAt: serverTimestamp(),
+async function syncState(payload, {uid, expectedGeneration, merge}) {
+  const ref = stateRef(uid);
+  return runTransaction(db, async transaction => {
+    const snapshot = await transaction.get(ref);
+    if (currentUser?.uid !== uid) throw new Error('ログイン状態が変わりました');
+    const remote = snapshot.exists() ? snapshot.data().payload : null;
+    if (remote) window.NinqData.validateBackup(remote);
+    const remoteGeneration = remote?.state?.restoreGeneration || 'initial';
+    const restore = payload.state.pendingRestore;
+    if (remote && remoteGeneration !== expectedGeneration && remoteGeneration !== payload.state.restoreGeneration) return {conflict:true, payload:remote};
+    if (remote?.version > 3) throw new Error('アプリを更新してください');
+    const next = JSON.parse(JSON.stringify(payload));
+    if (remote && !(restore && remoteGeneration === restore.base)) next.state = merge(payload.state, remote.state || remote);
+    next.state.pendingRestore = null;
+    if (remote && JSON.stringify(next.state) === JSON.stringify(remote.state)) return {conflict:false,payload:remote,generation:remoteGeneration};
+    next.generation = next.state.restoreGeneration || 'initial';
+    next.revision = (snapshot.data()?.revision || 0) + 1;
+    // Conservative guard: the server remains the authority for the exact encoded size.
+    if (new TextEncoder().encode(JSON.stringify(next)).length > 800000) throw new Error('クラウド保存容量に近づいています。データを書き出し、保存構造の更新が必要です');
+    transaction.set(ref, {payload:next, revision:next.revision, modifiedAt:next.modifiedAt || '',
+      appVersion:next.appVersion || '', syncedAt:new Date().toISOString(), updatedAt:serverTimestamp()});
+    return {conflict:false, payload:next, generation:next.generation};
   });
 }
 
@@ -94,7 +110,7 @@ window.NinqFirebaseCloud = {
   signOut: () => signOut(auth),
   currentUser: () => publicUser(currentUser),
   readState,
-  writeState,
+  syncState,
 };
 
 onAuthStateChanged(auth, (user) => {

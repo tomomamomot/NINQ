@@ -428,3 +428,22 @@ body[data-font="thin"] #sc-cal .month-label{font-weight:700}
 #sc-cal .cal-task.night{background:#8c80d9;color:#fff}
 #sc-cal .cal-task.trip{background:#93d9c8;color:#133a34}
 #sc-cal .cal-task.sub{background:#8ddbd3;color:#143b38;outline:none}
+.storage-banner{padding:6px 12px;font-size:12px;color:#24476c;background:#edf5ff;line-height:1.5;overflow-wrap:anywhere}
+.storage-banner,#onboarding,#update-notice{flex:0 0 auto}
+@media(min-width:1000px){#sc-cal>.storage-banner,#sc-cal>#onboarding,#sc-cal>#update-notice{max-width:406px;box-sizing:border-box}}
+@media print{.storage-banner{display:none!important}}
+.safety-panel{margin:10px 12px;padding:12px;border:1px solid #dce4ee;border-radius:12px;background:#fff;color:#203750;line-height:1.6}
+.safety-panel[hidden],#onboarding[hidden],#update-notice[hidden]{display:none!important}
+.safety-panel button,.invoice-tool-row button{min-height:40px;padding:8px 12px;margin:4px;border:1px solid #b9cde2;border-radius:8px;background:#f1f6fd;color:#17477b;cursor:pointer}
+.safety-panel p{overflow-wrap:anywhere;font-size:13px}
+.safety-panel summary, #entry-form summary{cursor:pointer;padding:10px 0;font-weight:700}
+#invoice-history button{display:block;text-align:left;width:calc(100% - 8px)}
+.expense-editor-row{display:flex;gap:4px;align-items:center;width:100%;margin:4px 0}
+.expense-editor-row input{min-width:0;flex:1;padding:10px;border:1px solid #cbd7e4;border-radius:8px}
+.expense-editor-row button{min-width:36px;min-height:40px;border:1px solid #cbd7e4;border-radius:8px;background:#f4f7fa}
+.extra-expense-sheet{margin-top:24px;break-before:page}
+.extra-expense-sheet table{border-collapse:collapse;width:100%;font-size:12px}
+.extra-expense-sheet th,.extra-expense-sheet td{border:1px solid #999;padding:6px;overflow-wrap:anywhere}
+.invoice-tool-row{flex-wrap:wrap}
+@media print{.demen-sheet td.left,.demen-sheet th.demen-title-person{white-space:normal!important;overflow-wrap:anywhere;overflow:visible!important;text-overflow:clip!important;height:auto!important}.demen-sheet td.left{padding-top:4px!important;padding-bottom:4px!important}.demen-sheet tr{break-inside:avoid}.demen-sheet tfoot{display:table-row-group}}
+@media print{.save-status,.safety-panel,#onboarding,#update-notice,#invoice-history{display:none!important}.invoice-table thead,.extra-expense-sheet thead{display:table-header-group}.invoice-table tr,.extra-expense-sheet tr{break-inside:avoid}.extra-expense-sheet{width:100%;padding-top:6mm}.invoice-to,.invoice-sender{overflow-wrap:anywhere}.invoice-scroll{display:block!important}.invoice-sheet{break-inside:auto!important}}

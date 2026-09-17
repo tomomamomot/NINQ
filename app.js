@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.07-1';
+const APP_VERSION = 'v2026.09.18-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -31,6 +31,17 @@ const SETTINGS_SECTIONS = {
   google: ['googleClientId', 'googleCalendarId', 'googleStoreMode', 'googleAccountEmail', 'googleSyncEnabled', 'googleConflictMode'],
 };
 
+let activeOwner = 'guest';
+let storageFailure = '';
+let storageBlocked = false;
+let localRevision = 0;
+let accountEpoch = 0;
+let cloudIssue = '';
+let selectedInvoiceId = '';
+let invoiceRevisionDraft = null;
+let invoiceRenderContext = null;
+let pendingBackup = null;
+let pendingBackupOwner = '';
 let state = loadState();
 let cursor = startOfMonth(new Date());
 let selectedDate = toYmd(new Date());
@@ -70,24 +81,24 @@ let openCompanyPresetId = '';
 let expenseQuickEditTarget = null;
 let expenseQuickViewportBound = false;
 
+function scopedKey(key, owner = activeOwner) { return `${key}:${owner}`; }
 function loadState() {
+  storageBlocked = false;
   try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (raw) {
-      const normalized = normalizeState(JSON.parse(raw));
-      localStorage.setItem(STORE_KEY, JSON.stringify(normalized));
-      return normalized;
-    }
+    const raw = localStorage.getItem(scopedKey(STORE_KEY));
+    if (raw) return normalizeState(JSON.parse(raw));
+    if (activeOwner !== 'guest') return normalizeState(DEFAULT_STATE);
+    const previous = localStorage.getItem(STORE_KEY);
+    if (previous) return normalizeState(JSON.parse(previous));
     for (const key of LEGACY_STORE_KEYS) {
       const legacy = localStorage.getItem(key);
       if (!legacy) continue;
       const migrated = key === LEGACY_STORE_KEYS[0] ? migrateLegacy(JSON.parse(legacy)) : normalizeState(JSON.parse(legacy));
-      localStorage.setItem(STORE_KEY, JSON.stringify(migrated));
-      localStorage.removeItem(key);
       return migrated;
     }
   } catch (error) {
-    console.warn('loadState failed', error);
+    storageBlocked = true;
+    storageFailure = '保存データを読み込めません。元データを保護しています。復旧用データを書き出してください';
   }
   return clone(DEFAULT_STATE);
 }
@@ -102,6 +113,7 @@ function fontSizeOptions(selected) {
   return ['1', '2', '3', '4', '5', '6'].map((level) => `<option value="${level}" ${level === current ? 'selected' : ''}>${level}</option>`).join('');
 }
 function normalizeState(source) {
+  source = source && typeof source === 'object' ? source : {};
   const settings = { ...clone(DEFAULT_SETTINGS), ...(source.settings || {}) };
   settings.companies = Array.isArray(settings.companies) ? settings.companies.filter(Boolean) : [];
   settings.companyRates = normalizeCompanyRates(settings.companyRates, settings.companies);
@@ -129,11 +141,14 @@ function normalizeState(source) {
     const removedAt = new Date(Math.max(Date.now(), dateTime(RECEIPT_REMOVAL_AT), dateTime(receipt?.updatedAt) + 1, dateTime(receipt?.importedAt) + 1)).toISOString();
     if (dateTime(deletedReceiptIds[id]) < dateTime(removedAt)) deletedReceiptIds[id] = removedAt;
   });
-  return { entries, receipts: [], deletedEntryIds, deletedReceiptIds, settings };
+  return { schemaVersion: 3, restoreGeneration: source.restoreGeneration || 'initial',
+    pendingRestore: source.pendingRestore || null, invoices: Array.isArray(source.invoices) ? clone(source.invoices) : [],
+    migrationIds: Array.isArray(source.migrationIds) ? [...source.migrationIds] : [],
+    entries, receipts: [], deletedEntryIds, deletedReceiptIds, settings };
 }
 function normalizeExpenseItems(items) {
   const list = Array.isArray(items) ? items : [];
-  const mapped = list.map((item, index) => typeof item === 'string' ? { id: `exp${index + 1}`, label: item } : { id: item.id || `exp${index + 1}`, label: item.label || `項目${index + 1}` }).filter((item) => item.label.trim());
+  const mapped = list.map((item, index) => typeof item === 'string' ? { id: `exp${index + 1}`, label: item } : { id: item.id || `exp${index + 1}`, label: item.label || `項目${index + 1}`, archived: !!item.archived }).filter((item) => item.label.trim());
   return mapped.length ? mapped : clone(DEFAULT_SETTINGS.expenseItems);
 }
 function normalizeDayModalItems(items, availableExpenses = DEFAULT_SETTINGS.expenseItems) {
@@ -233,25 +248,45 @@ function migrateLegacy(oldData) {
   return migrated;
 }
 function saveState(nextState = state) {
-  localStorage.setItem(STORE_KEY, JSON.stringify(normalizeState(nextState)));
+  if (storageBlocked) { renderSaveStatus(); return false; }
+  try {
+    localStorage.setItem(scopedKey(STORE_KEY), JSON.stringify(normalizeState(nextState)));
+    storageFailure = ''; localRevision++;
+    renderSaveStatus(); return true;
+  } catch (error) {
+    storageFailure = '未保存：端末の保存容量または保存権限を確認してください';
+    renderSaveStatus(); return false;
+  }
+}
+function saveRecovery(reason, value = state) {
+  const key = scopedKey(`ninq-recovery-${Date.now()}-${crypto.randomUUID()}`);
+  const raw = JSON.stringify({app:'NINQ', version:3, reason, exportedAt:new Date().toISOString(), state:value});
+  localStorage.setItem(key, raw);
+  if (localStorage.getItem(key) !== raw) throw new Error('復旧用コピーを確保できませんでした');
+  return key;
+}
+function safeMetaWrite(key, value) {
+  try { localStorage.setItem(scopedKey(key), JSON.stringify(value)); }
+  catch (error) { storageFailure = '未保存：同期状態を保存できません'; renderSaveStatus(); }
 }
 function loadSyncMeta() {
   try {
-    return { lastCloudModifiedAt: '', lastLocalModifiedAt: '', lastSyncedAt: '', ...(JSON.parse(localStorage.getItem(SYNC_META_KEY) || '{}')) };
+    return { lastCloudModifiedAt: '', lastLocalModifiedAt: '', lastSyncedAt: '', ...(JSON.parse(localStorage.getItem(scopedKey(SYNC_META_KEY)) || '{}')) };
   } catch (error) {
     return { lastCloudModifiedAt: '', lastLocalModifiedAt: '', lastSyncedAt: '' };
   }
 }
-function saveSyncMeta(meta) { localStorage.setItem(SYNC_META_KEY, JSON.stringify({ ...loadSyncMeta(), ...meta })); }
+function saveSyncMeta(meta) { safeMetaWrite(SYNC_META_KEY, { ...loadSyncMeta(), ...meta }); }
 function loadSyncPending() {
   try {
-    return { pending: false, reason: '', at: '', ...(JSON.parse(localStorage.getItem(SYNC_PENDING_KEY) || '{}')) };
+    return { pending: false, reason: '', at: '', ...(JSON.parse(localStorage.getItem(scopedKey(SYNC_PENDING_KEY)) || '{}')) };
   } catch (error) {
     return { pending: false, reason: '', at: '' };
   }
 }
 function saveSyncPending(pending, reason = '') {
-  localStorage.setItem(SYNC_PENDING_KEY, JSON.stringify({ pending: !!pending, reason, at: pending ? new Date().toISOString() : '' }));
+  safeMetaWrite(SYNC_PENDING_KEY, { pending: !!pending, reason, at: pending ? new Date().toISOString() : '' });
+  renderSaveStatus();
 }
 function dateTime(value) { return Date.parse(value || '') || 0; }
 function isAfterDate(a, b) { return dateTime(a) > dateTime(b); }
@@ -323,7 +358,8 @@ function editingGroupIds() {
   const entry = editingId ? state.entries.find((item) => item.id === editingId) : null;
   return entryRangeGroup(entry).ids;
 }
-function expenseItems() { return normalizeExpenseItems(state.settings.expenseItems); }
+function allExpenseItems() { return normalizeExpenseItems(state.settings.expenseItems); }
+function expenseItems() { return allExpenseItems().filter(item => !item.archived); }
 function coreExpenseItems() {
   const aliases = [
     { id: 'exp1', label: '交通費', match: /交通/ },
@@ -338,10 +374,8 @@ function coreExpenseItems() {
   });
 }
 function modalExpenseItems() {
-  const map = new Map();
-  coreExpenseItems().forEach((item) => map.set(item.id, item));
-  expenseItems().forEach((item) => map.set(item.id, item));
-  return [...map.values()];
+  const entry = state.entries.find(item => item.id === editingId);
+  return allExpenseItems().filter(item => !item.archived || num(entry?.expenses?.[item.id]));
 }
 function dayModalDisplayOptions() {
   return [...expenseItems().map((item) => ({ ...item, kind: 'expense' })), { id: DAY_MODAL_OVERTIME_ID, label: '残業', kind: 'overtime' }];
@@ -404,6 +438,7 @@ function normalizeCompanyInputName(value) { return companyPresetByAnyName(value)
 function companyCalendarName(value) { return companyPresetByAnyName(value)?.name || String(value || '').trim(); }
 function companyClosingDay(name) { return closingDayValue(companyPresetByName(name)?.closingDay); }
 function companyBillingRange(name, baseDate = cursor) {
+  if (invoiceRenderContext && name === selectedCompany) return invoiceRenderContext.period;
   const closingDay = companyClosingDay(name);
   const year = baseDate.getFullYear();
   const month = baseDate.getMonth();
@@ -674,7 +709,7 @@ function renderDayModalItemSelector() {
   const selected = new Set(normalizeDayModalItems(state.settings.dayModalItems, expenseItems()));
   list.innerHTML = dayModalDisplayOptions().map((item) => `<label class="setting-check-chip"><input type="checkbox" data-day-modal-item="${escapeHtml(item.id)}" ${selected.has(item.id) ? 'checked' : ''}><span>${escapeHtml(item.label)}</span></label>`).join('');
 }
-function renderSettingListEditors() { ensureCompanySheetNameInput(); renderCompanyPresetList(); renderEditableList('st-expense-list', 'st-expenses'); renderDayModalItemSelector(); }
+function renderSettingListEditors() { ensureCompanySheetNameInput(); renderCompanyPresetList(); renderExpenseEditor(); renderDayModalItemSelector(); }
 function addCompanyPreset() {
   const nameInput = document.getElementById('st-company-new'); if (!nameInput) return;
   const name = nameInput.value.trim(); if (!name) return;
@@ -706,6 +741,7 @@ function addSettingListItem(hiddenId, inputId) {
   renderSettingListEditors();
 }
 function showSaveFeedback(message) {
+  if (storageFailure) message = storageFailure;
   const el = document.getElementById('save-status'); if (!el) { alert(message); return; }
   el.textContent = message; el.classList.add('show');
   window.clearTimeout(showSaveFeedback.timer);
@@ -719,7 +755,7 @@ function calcEntry(entry) {
   const qty = isContract ? 0 : qtyValue(entry.qty), unitRate = isContract ? 0 : num(entry.unitRate), otHours = isContract ? 0 : num(entry.otHours), otRate = isContract || !otHours ? 0 : num(entry.otRate);
   const labor = qty * unitRate, overtime = otHours * otRate;
   const contractAmount = contractAnchor ? num(entry.contractAmount) : 0;
-  const expenses = expenseItems().reduce((sum, item) => sum + num(entry.expenses?.[item.id]), 0);
+  const expenses = Object.values(entry.expenses || {}).reduce((sum, value) => sum + num(value), 0);
   const subtotal = labor + contractAmount + overtime + expenses;
   const subcontractSales = labor + contractAmount + overtime;
   const paymentAmount = entry.type === 'sub' && (!isContract || contractAnchor) ? num(entry.paymentAmount) : 0;
@@ -806,7 +842,7 @@ function calendarTaskClass(entry, ymd, dayOfWeek) {
   return classes.filter(Boolean).join(' ');
 }
 
-function renderAll() { applyDisplayPreferences(); renderNav(); renderHeaders(); renderCalendar(); renderDayEntries(); renderDesktopSheet(); renderSubScreen(); renderInvoiceScreen(); renderSettings(); renderSyncScreen(); }
+function renderAll() { renderSaveStatus(); renderOnboarding(); applyDisplayPreferences(); renderNav(); renderHeaders(); renderCalendar(); renderDayEntries(); renderDesktopSheet(); renderSubScreen(); renderInvoiceScreen(); renderSettings(); renderSyncScreen(); }
 function renderNav() {
   if (activeScreen === 'sub' && !subcontractEnabled()) activeScreen = 'cal';
   if (activeScreen !== 'cal') {
@@ -882,10 +918,7 @@ function renderSummary() {
     <div class="sum-card"><div class="sl">${cursor.getFullYear()}年の売上</div><div class="sv ${hidden ? 'hidden-amount' : ''}">${yen(yearSalesAmount, hidden)}</div></div>`;
 }
 function desktopSheetExpenseColumns() {
-  const map = new Map();
-  expenseItems().forEach((item) => map.set(item.id, item));
-  coreExpenseItems().forEach((item) => { if (!map.has(item.id)) map.set(item.id, item); });
-  return [...map.values()];
+  return NinqData.expenseColumns(allExpenseItems(), monthEntries()).map(col => col.item);
 }
 function desktopSheetInput({ field, value = '', id = '', extra = '', type = 'text' }) {
   return `<input class="desktop-sheet-input ${extra}" type="${type}" data-sheet-field="${field}" value="${escapeHtml(value)}" ${id ? `data-expense-id="${escapeHtml(id)}"` : ''}>`;
@@ -1033,7 +1066,7 @@ function closeDayModal() {
 
 function expenseItemById(expenseId) {
   if (expenseId === DAY_MODAL_OVERTIME_ID) return { id: DAY_MODAL_OVERTIME_ID, label: '残業時間（h）', kind: 'overtime' };
-  return [...coreExpenseItems(), ...expenseItems()].find((item) => item.id === expenseId) || { id: expenseId, label: '経費' };
+  return allExpenseItems().find((item) => item.id === expenseId) || { id: expenseId, label: `旧経費 (${expenseId})` };
 }
 
 function resetExpenseQuickPosition() {
@@ -1283,7 +1316,7 @@ function renderSubScreen() {
 }
 const DEMEN_EXPENSE_LABELS = ['交通費', '駐車場代', '宿泊代', 'ガソリン代', '資材等', '他諸経費'];
 function invoiceDateLabel() {
-  const end = fromYmd(companyBillingRange(selectedCompany).end);
+  const end = fromYmd((invoiceRenderContext?.issuedAt ? toYmd(new Date(invoiceRenderContext.issuedAt)) : '') || invoiceRenderContext?.period.end || companyBillingRange(selectedCompany).end);
   return `${end.getFullYear()}年${end.getMonth() + 1}月${end.getDate()}日`;
 }
 function entriesForInvoiceCompany() {
@@ -1301,7 +1334,7 @@ function invoiceTotals(entries) {
   const contract = sumBy(entries, (entry) => calcEntry(entry).contractAmount);
   const otHours = sumBy(entries, (entry) => calcEntry(entry).otHours);
   const overtime = sumBy(entries, (entry) => calcEntry(entry).overtime);
-  const expenseColumns = DEMEN_EXPENSE_LABELS.map((label, index) => ({ label, item: expenseItems()[index] || { id: `exp${index + 1}`, label } }));
+  const expenseColumns = NinqData.expenseColumns(allExpenseItems(), entries);
   const expenses = expenseColumns.map((col) => ({ ...col, total: sumBy(entries, (entry) => num(entry.expenses?.[col.item.id])) }));
   const expenseTotal = expenses.reduce((sum, item) => sum + item.total, 0);
   const subtotal = labor + contract + overtime;
@@ -1312,8 +1345,13 @@ function buildInvoiceSheet(entries, totals, hidden) {
   const s = state.settings;
   const invoiceFontSize = fontSizeLevel(s.invoiceFontSize);
   const invoiceCompany = companyOfficialName(selectedCompany);
-  const otRate = entries.find((entry) => calcEntry(entry).otRate)?.otRate || 0;
-  const stamp = s.stampImage ? `<img class="invoice-stamp" src="${s.stampImage}" alt="印鑑">` : '';
+  const overtimeGroups = new Map();
+  entries.forEach(entry => { const calc = calcEntry(entry); if (!calc.otHours) return;
+    const group = overtimeGroups.get(calc.otRate) || {hours:0, amount:0};
+    group.hours += calc.otHours; group.amount += calc.overtime; overtimeGroups.set(calc.otRate, group);
+  });
+  const overtimeRows = [...overtimeGroups].map(([rate, group]) => `<tr><td></td><td colspan="2" class="left">残業</td><td>${qtyLabel(group.hours)}</td><td>h</td><td class="right">${yenPlain(rate, hidden)}</td><td class="right">${yenPlain(group.amount, hidden)}</td><td></td></tr>`).join('');
+  const stamp = s.stampImage ? `<img class="invoice-stamp" src="${escapeHtml(s.stampImage)}" alt="印鑑">` : '';
   const senderPostal = s.postalCode ? `〒 ${escapeHtml(s.postalCode)}` : '';
   const senderAddress = s.address ? escapeHtml(s.address) : '';
   const laborGroups = [
@@ -1373,7 +1411,7 @@ function buildInvoiceSheet(entries, totals, hidden) {
           <tbody>
             ${laborRows}
             ${contractRows}
-            <tr><td></td><td colspan="2" class="left">残業</td><td>${totals.otHours || ''}</td><td>h</td><td class="right">${otRate ? yenPlain(otRate, hidden) : ''}</td><td class="right">${totals.overtime ? yenPlain(totals.overtime, hidden) : ''}</td><td></td></tr>
+            ${overtimeRows}
             <tr><td></td><td colspan="2" class="right">小計</td><td></td><td></td><td></td><td class="right">${yenPlain(totals.subtotal, hidden)}</td><td></td></tr>
             <tr><td></td><td colspan="2" class="right">消費税${num(s.taxRate)}%</td><td></td><td></td><td></td><td class="right">${yenPlain(totals.tax, hidden)}</td><td></td></tr>
             <tr><td></td><td colspan="2" class="center">諸経費</td><td></td><td></td><td></td><td></td><td></td></tr>
@@ -1443,17 +1481,21 @@ function mergeDemenSelfAndSubEntries(entries) {
   return output.sort(sortEntriesForDemen);
 }
 function buildDemenSheet(entries, totals, hidden) {
-  const expenseColumns = totals.expenses;
+  const expenseColumns = NinqData.paperColumns(totals.expenses);
+  expenseColumns.forEach(col => { col.total = sumBy(entries, entry => col.ids.reduce((sum,id) => sum + num(entry.expenses?.[id]),0)); });
+  const extraColumns = totals.expenses.length > 6 ? totals.expenses.slice(5) : [];
+  const extraRows = entries.flatMap(entry => extraColumns.filter(col => num(entry.expenses?.[col.item.id])).map(col => `<tr><td>${escapeHtml(entry.date)}</td><td>${escapeHtml(entry.site)}</td><td>${escapeHtml(col.label)}</td><td>${yenPlain(entry.expenses[col.item.id], hidden)}</td></tr>`)).join('');
+  const extraSheet = extraRows ? `<section class="extra-expense-sheet"><h3>追加経費 明細</h3><table><thead><tr><th>日付</th><th>現場</th><th>経費</th><th>金額</th></tr></thead><tbody>${extraRows}</tbody></table></section>` : '';
   const demenFontSize = fontSizeLevel(state.settings.invoiceFontSize);
   const billingRange = companyBillingRange(selectedCompany);
   const billingDates = dateList(billingRange.start, billingRange.end);
   const spansMonths = monthKey(billingRange.start) !== monthKey(billingRange.end);
-  const expenseHeaders = `${DEMEN_EXPENSE_LABELS.map((label) => `<th>${escapeHtml(label)}</th>`).join('')}<th>金　額</th>`;
+  const expenseHeaders = `${expenseColumns.map((col) => `<th>${escapeHtml(col.label)}</th>`).join('')}<th>金　額</th>`;
   const demenRow = (day, entry = null, dayRowspan = 1) => {
     const dayCell = day === null ? '' : `<td class="demen-day-cell" ${dayRowspan > 1 ? `rowspan="${dayRowspan}"` : ''}>${day}</td>`;
     if (!entry) return `<tr>${dayCell}<td class="left"></td><td></td><td class="right"></td><td class="right"></td><td></td><td class="right"></td><td class="right"></td>${expenseColumns.map(() => '<td class="right"></td>').join('')}<td class="right"></td></tr>`;
     const calc = calcEntry(entry);
-    const expenses = expenseColumns.map((col) => num(entry.expenses?.[col.item.id]));
+    const expenses = expenseColumns.map(col => col.ids.reduce((sum,id) => sum + num(entry.expenses?.[id]),0));
     const siteClass = entry.shift === 'night' ? 'left demen-night-site' : 'left';
     const siteLabel = entry.billingType === 'contract' ? `請負／${entry.site || '現場未入力'}` : (entry.site || '');
     return `<tr class="${entry.shift === 'night' ? 'demen-night-row' : ''} ${entry.billingType === 'contract' ? 'demen-contract-row' : ''}">${dayCell}<td class="${siteClass}">${escapeHtml(siteLabel)}</td><td>${calc.qty || ''}</td><td class="right">${calc.unitRate ? yenPlain(calc.unitRate, hidden) : ''}</td><td class="right">${calc.labor ? yenPlain(calc.labor, hidden) : ''}</td><td>${calc.otHours || ''}</td><td class="right">${calc.otRate ? yenPlain(calc.otRate, hidden) : ''}</td><td class="right">${calc.overtime ? yenPlain(calc.overtime, hidden) : ''}</td>${expenses.map((value) => `<td class="right">${value ? yenPlain(value, hidden) : ''}</td>`).join('')}<td class="right">${calc.subtotal ? yenPlain(calc.subtotal, hidden) : ''}</td></tr>`;
@@ -1474,10 +1516,10 @@ function buildDemenSheet(entries, totals, hidden) {
         </thead>
         <tbody>${bodyRows}</tbody>
         <tfoot>
-          <tr><td></td><td class="right">小計</td><td>${qtyLabel(totals.qty)}</td><td></td><td class="right">${yenPlain(totals.labor, hidden)}</td><td>${totals.otHours || ''}</td><td></td><td class="right">${totals.overtime ? yenPlain(totals.overtime, hidden) : ''}</td>${totals.expenses.map((item) => `<td class="right">${item.total ? yenPlain(item.total, hidden) : ''}</td>`).join('')}<td class="right">${yenPlain(totals.labor + totals.contract + totals.overtime + totals.expenseTotal, hidden)}</td></tr>
+          <tr><td></td><td class="right">小計</td><td>${qtyLabel(totals.qty)}</td><td></td><td class="right">${yenPlain(totals.labor, hidden)}</td><td>${totals.otHours || ''}</td><td></td><td class="right">${totals.overtime ? yenPlain(totals.overtime, hidden) : ''}</td>${expenseColumns.map((item) => `<td class="right">${item.total ? yenPlain(item.total, hidden) : ''}</td>`).join('')}<td class="right">${yenPlain(totals.labor + totals.contract + totals.overtime + totals.expenseTotal, hidden)}</td></tr>
           <tr class="demen-grand-row"><td colspan="9"></td><td colspan="3" class="right">合計</td><td colspan="3" class="right">${yenPlain(totals.labor + totals.contract + totals.overtime + totals.expenseTotal, hidden)}</td></tr>
         </tfoot>
-      </table>
+      </table>${extraSheet}
     </div>`;
 }
 function annualCompanyMonths(company, year) {
@@ -1519,7 +1561,7 @@ function annualMonthDetailHtml(month, hidden) {
   if (!month.entries.length) return '<div class="annual-detail-empty">この締め分の取引はありません</div>';
   const rows = month.entries.map((entry) => {
     const calc = calcEntry(entry);
-    const expenseText = expenseItems()
+    const expenseText = NinqData.expenseColumns(allExpenseItems(), [entry]).map(col => col.item)
       .map((item) => ({ label: item.label, value: num(entry.expenses?.[item.id]) }))
       .filter((item) => item.value)
       .map((item) => `${item.label} ${yenPlain(item.value, hidden)}`)
@@ -1541,7 +1583,7 @@ function annualMonthDetailHtml(month, hidden) {
   }).join('');
   const cards = month.entries.map((entry) => {
     const calc = calcEntry(entry);
-    const expenseText = expenseItems()
+    const expenseText = NinqData.expenseColumns(allExpenseItems(), [entry]).map(col => col.item)
       .map((item) => ({ label: item.label, value: num(entry.expenses?.[item.id]) }))
       .filter((item) => item.value)
       .map((item) => `${item.label} ${yen(item.value, hidden)}`)
@@ -1616,6 +1658,7 @@ function renderAllCompanyAnnualTransactions(hidden) {
     ${activeMonth ? `<section class="annual-detail"><div class="annual-detail-head"><div><strong>${activeMonth.month + 1}月締め分の会社別明細</strong><span>各社の締め日を基準に集計</span></div><button type="button" data-annual-month="${activeMonth.month}" aria-label="明細を閉じる">×</button></div>${detail || '<div class="annual-detail-empty">この月の取引はありません</div>'}</section>` : ''}`;
 }
 function renderInvoiceScreen() {
+  if (renderInvoiceArchive()) return;
   const tabs = document.getElementById('co-tabs');
   const body = document.getElementById('inv-body');
   document.querySelectorAll('[data-invoice-view]').forEach((button) => button.classList.toggle('active', button.dataset.invoiceView === invoiceViewMode));
@@ -1630,7 +1673,7 @@ function renderInvoiceScreen() {
   const entries = entriesForInvoiceCompany();
   const totals = invoiceTotals(entries);
   const invoiceFontSize = fontSizeLevel(state.settings.invoiceFontSize);
-  body.innerHTML = `<div class="invoice-tool-row"><span class="billing-period-label">${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</span><label>請求書フォント<select id="invoice-font-size-select">${fontSizeOptions(invoiceFontSize)}</select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
+  body.innerHTML = `<div class="invoice-tool-row"><strong>下書き</strong><button class="btn-primary" data-finalize-invoice>請求書を確定</button><span class="billing-period-label">${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</span><label>請求書フォント<select id="invoice-font-size-select">${fontSizeOptions(invoiceFontSize)}</select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
 }
 function syncStatusText() {
   const pending = loadSyncPending();
@@ -1644,6 +1687,7 @@ function syncStatusText() {
   return '未設定';
 }
 function renderSyncScreen() {
+  renderSafetySync();
   const month = monthEntries();
   const sub = document.getElementById('sync-sub'); if (sub) sub.textContent = '出力と引き継ぎ';
   const syncTopTitle = document.querySelector('#sc-sync .topbar-title'); if (syncTopTitle) syncTopTitle.textContent = '同期・連携';
@@ -1692,7 +1736,7 @@ function renderSyncScreen() {
     const configured = !!String(state.settings.googleClientId || '').trim();
     const summary = authDetails.querySelector('summary');
     if (summary) summary.textContent = configured ? 'Googleカレンダー接続設定' : 'Googleカレンダー接続設定が必要です';
-    if (!configured) authDetails.open = true;
+    // Technical connection settings remain collapsed by default.
   }
   if (cloudSection && sendButton && receiveButton) {
     let manual = cloudSection.querySelector('.cloud-manual-details');
@@ -1884,7 +1928,7 @@ function openModal(type, id = null) {
   document.getElementById('modal-title').textContent = id ? '予定を編集' : '予定を追加';
   document.getElementById('modal-body').innerHTML = `
     <div class="type-sel">${typeButtons}</div>
-    <form id="entry-form">
+    <form id="entry-form">${!id && state.entries.length ? '<button type="button" class="btn-secondary" data-reuse-previous>前回の予定を使う</button>' : ''}
       <div class="field"><label>売上方式</label><div class="type-sel billing-type-sel">${billingButtons}</div></div>
       <div class="field-r2">
         <div class="field"><label>開始日</label><input id="f-date" class="date-picker-input" type="text" inputmode="none" readonly data-date-picker value="${escapeHtml(startValue)}"></div>
@@ -1895,14 +1939,14 @@ function openModal(type, id = null) {
       <div class="field"><label>会社名</label>${companyPickBlock}</div>
       <div class="field"><label>現場名</label><input id="f-site" value="${escapeHtml(entry.site)}" placeholder="空欄でも保存できます"></div>
       <div class="field-r2"><div class="field"><label>勤務区分</label><select id="f-shift"><option value="day" ${entry.shift === 'day' ? 'selected' : ''}>日勤</option><option value="night" ${entry.shift === 'night' ? 'selected' : ''}>夜勤</option><option value="trip" ${entry.shift === 'trip' ? 'selected' : ''}>出張</option></select></div><div class="field ${isContract ? 'hidden' : ''}" id="labor-qty-wrap"><label>人工</label><input id="f-qty" type="number" min="0" step="0.5" value="${entry.qty}"></div></div>
-      <div class="field-r3 ${isContract ? 'hidden' : ''}" id="labor-rate-wrap"><div class="field"><label>単価</label><input id="f-rate" type="number" min="0" step="1" value="${rateFieldValue(entry.unitRate)}"></div><div class="field"><label>残業時間</label><input id="f-ot-hours" type="number" min="0" step="0.5" value="${num(entry.otHours) || ''}"></div><div class="field"><label>残業単価</label><input id="f-ot-rate" type="number" min="0" step="1" value="${rateFieldValue(entry.otRate)}"></div></div>
+      <div class="${isContract ? 'hidden' : ''}" id="labor-rate-wrap"><div class="field"><label>単価</label><input id="f-rate" type="number" min="0" step="1" value="${rateFieldValue(entry.unitRate)}"></div><details ${num(entry.otHours) || num(entry.otRate) ? 'open' : ''}><summary>残業</summary><div class="field-r2"><div class="field"><label>残業時間</label><input id="f-ot-hours" type="number" min="0" step="0.5" value="${num(entry.otHours) || ''}"></div><div class="field"><label>残業単価</label><input id="f-ot-rate" type="number" min="0" step="1" value="${rateFieldValue(entry.otRate)}"></div></div></details></div>
       <div class="field ${isContract ? '' : 'hidden'}" id="contract-amount-wrap"><label>請負金額（仕事全体）</label><input id="f-contract-amount" type="number" min="0" step="1" value="${num(entry.contractAmount) || ''}" placeholder="未確定の場合は空欄でも保存できます"><small class="field-note">複数日の場合は最終日に1回だけ売上へ計上します</small></div>
       <div class="${isSub ? '' : 'hidden'}" id="sub-pay-wrap">
         <div class="field-r2"><div class="field"><label>支払金額</label><input id="f-payment-amount" type="number" min="0" step="1" value="${optionalMoneyFieldValue(entry.paymentAmount, entry.paymentAmountSet)}" placeholder="実際に払う金額"></div><div class="field"><label>差額</label><input id="sub-diff-preview" readonly value=""></div></div>
         <div class="sub-pay-note">売上計算 <strong id="sub-sales-preview">¥0</strong> との差額を表示します</div>
       </div>
-      <div class="sec-hd" style="padding:0 0 8px">経費</div><div class="field-r2">${expenseFields}</div>
-      <div class="field"><label>メモ</label><textarea id="f-notes" placeholder="注意点やメモ">${escapeHtml(entry.notes)}</textarea></div>
+      <details ${Object.values(entry.expenses || {}).some(value => num(value)) ? 'open' : ''}><summary>経費</summary><div class="field-r2">${expenseFields}</div></details>
+      <details ${entry.notes ? 'open' : ''}><summary>メモ</summary><div class="field"><textarea id="f-notes" aria-label="メモ" placeholder="注意点やメモ">${escapeHtml(entry.notes)}</textarea></div></details>
       <div class="btn-row entry-actions"><button class="btn-secondary" type="button" id="cancel-entry-btn">キャンセル</button><button class="btn-primary" type="submit">保存</button></div>
     </form>`;
   renderRangeExclusions(editRange?.excludedDates || []);
@@ -1941,7 +1985,7 @@ function collectEntryForm() {
     type, billingType, contractAmount: billingType === 'contract' ? num(document.getElementById('f-contract-amount')?.value) : 0, shift: document.getElementById('f-shift').value,
     company: normalizeCompanyInputName(document.getElementById('f-company').value), site: document.getElementById('f-site').value.trim(), workerName: document.getElementById('f-worker').value.trim(),
     qty: billingType === 'contract' ? 0 : num(document.getElementById('f-qty')?.value), unitRate: billingType === 'contract' ? 0 : num(document.getElementById('f-rate')?.value), paymentAmount: type === 'sub' ? num(paymentInput?.value) : 0, paymentAmountSet, otHours: billingType === 'contract' ? 0 : num(document.getElementById('f-ot-hours')?.value), otRate: billingType === 'contract' ? 0 : num(document.getElementById('f-ot-rate')?.value),
-    expenses: {}, notes: document.getElementById('f-notes').value.trim(), invoiceMode: 'with', createdAt, updatedAt: new Date().toISOString()
+    expenses: {...(original?.expenses || {})}, notes: document.getElementById('f-notes').value.trim(), invoiceMode: 'with', createdAt, updatedAt: new Date().toISOString()
   };
   document.querySelectorAll('[data-expense-id]').forEach((input) => { base.expenses[input.dataset.expenseId] = num(input.value); });
   const excludedDates = [...document.querySelectorAll('[data-range-exclude]:checked')].map((input) => input.value);
@@ -2022,148 +2066,16 @@ async function loginFirebaseCloud() {
     if (!firebaseAvailable()) throw new Error('Firebaseの読み込み待ちです。数秒後にもう一度押してください');
     setSyncLog('NINQクラウドにログインしています...');
     const user = await window.NinqFirebaseCloud.signIn();
-    if (user) firebaseUser = user;
+    // Auth state event owns account activation; do not bypass the account boundary.
     return firebaseUser;
   } catch (error) {
     setSyncLog(error.message || 'NINQクラウドログインに失敗しました');
     return null;
   }
 }
-async function sendDeviceToFirebase() {
-  if (activeScreen === 'st') flushSettingsAutosave();
-  if (!firebaseAvailable()) { setSyncLog('Firebaseの読み込み待ちです。数秒後にもう一度押してください'); return; }
-  if (!firebaseUser) { await loginFirebaseCloud(); if (!firebaseUser) return; }
-  if (firebaseSyncInFlight) { setSyncLog('処理中です。少し待ってからもう一度押してください'); return; }
-  firebaseSyncInFlight = true;
-  try {
-    setSyncLog('この端末のデータをNINQクラウドへ保存しています...');
-    const payload = firebaseSyncPayload();
-    await window.NinqFirebaseCloud.writeState(payload);
-    rememberDriveSync(payload);
-    saveSyncPending(false);
-    setSyncLog(`この端末からNINQクラウドへ保存しました。予定 ${state.entries.length}件`);
-  } catch (error) {
-    saveSyncPending(true, 'save');
-    setSyncLog(error.message || 'NINQクラウドへの保存に失敗しました');
-  } finally {
-    firebaseSyncInFlight = false;
-    renderSyncScreen();
-  }
-}
-async function receiveDeviceFromFirebase() {
-  if (activeScreen === 'st') flushSettingsAutosave();
-  if (!firebaseAvailable()) { setSyncLog('Firebaseの読み込み待ちです。数秒後にもう一度押してください'); return; }
-  if (!firebaseUser) { await loginFirebaseCloud(); if (!firebaseUser) return; }
-  if (firebaseSyncInFlight) { setSyncLog('処理中です。少し待ってからもう一度押してください'); return; }
-  if (hasLocalChangesSinceSync() && !confirm('この端末の未送信の変更を、NINQクラウドのデータで置き換えます。受け取りますか？')) return;
-  firebaseSyncInFlight = true;
-  try {
-    setSyncLog('NINQクラウドからデータを受け取っています...');
-    const remotePayload = await window.NinqFirebaseCloud.readState();
-    if (!remotePayload) { setSyncLog('NINQクラウドにはまだデータがありません。先に「この端末から送る」を押してください'); return; }
-    applyRemoteFirebaseState(remotePayload);
-    setSyncLog(`NINQクラウドから受け取りました。予定 ${state.entries.length}件`);
-  } catch (error) {
-    setSyncLog(error.message || 'NINQクラウドからの受け取りに失敗しました');
-  } finally {
-    firebaseSyncInFlight = false;
-    renderSyncScreen();
-  }
-}
-async function syncFirebaseCloud({ auto = false, reason = '' } = {}) {
-  if (activeScreen === 'st') flushSettingsAutosave();
-  window.clearTimeout(firebaseSyncTimer);
-  firebaseSyncTimer = null;
-  if (auto && isEditingSyncSensitiveField()) {
-    scheduleFirebaseAutoSync({ delay: 8000, reason });
-    return;
-  }
-  if (auto && (!state.settings.googleSyncEnabled || !firebaseUser)) return;
-  if (!firebaseAvailable()) return;
-  if (!navigator.onLine) {
-    saveSyncPending(true, reason || 'offline');
-    setSyncLog('オフラインのためNINQクラウド同期を待機しています');
-    renderSyncScreen();
-    return;
-  }
-  if (firebaseSyncInFlight) {
-    firebaseSyncQueued = true;
-    return;
-  }
-  firebaseSyncInFlight = true;
-  try {
-    if (reason !== 'poll') setSyncLog(auto && reason === 'save' ? '変更をNINQクラウドへ保存中です...' : 'NINQクラウドの最新データを確認中です...');
-    const remotePayload = await window.NinqFirebaseCloud.readState();
-    if (!remotePayload) {
-      const payload = firebaseSyncPayload();
-      await window.NinqFirebaseCloud.writeState(payload);
-      rememberDriveSync(payload);
-      saveSyncPending(false);
-      setSyncLog('NINQクラウドに初回データを保存しました');
-      return;
-    }
-    const meta = loadSyncMeta();
-    const firstCloudSync = !meta.lastSyncedAt && !meta.lastCloudModifiedAt;
-    if (firstCloudSync) {
-      state = mergeFirebaseState(remotePayload, { preferRemoteSettings: true });
-      saveState();
-      const payload = firebaseSyncPayload();
-      await window.NinqFirebaseCloud.writeState(payload);
-      rememberDriveSync(payload);
-      saveSyncPending(false);
-      renderAll();
-      setSyncLog(`初回同期が完了しました。クラウド設定を受け取り、予定${state.entries.length}件を統合しました`);
-      return;
-    }
-    const remoteModifiedAt = remotePayloadModifiedAt(remotePayload);
-    const remoteChanged = isAfterDate(remoteModifiedAt, meta.lastCloudModifiedAt);
-    const localChanged = hasLocalChangesSinceSync();
-    if (remoteChanged && localChanged) {
-      const mergedState = mergeFirebaseState(remotePayload);
-      state = mergedState;
-      saveState();
-      const payload = firebaseSyncPayload();
-      await window.NinqFirebaseCloud.writeState(payload);
-      rememberDriveSync(payload);
-      saveSyncPending(false);
-      renderAll();
-      setSyncLog(`PC/スマホの変更をまとめて保存しました。予定 ${state.entries.length}件`);
-      return;
-    }
-    if (remoteChanged && !localChanged) {
-      state = mergeFirebaseState(remotePayload);
-      saveState();
-      const payload = firebaseSyncPayload();
-      await window.NinqFirebaseCloud.writeState(payload);
-      rememberDriveSync(payload);
-      saveSyncPending(false);
-      renderAll();
-      setSyncLog(`NINQクラウドから最新データを取得しました。予定 ${state.entries.length}件`);
-      return;
-    }
-    if (localChanged || reason === 'save') {
-      const payload = firebaseSyncPayload();
-      await window.NinqFirebaseCloud.writeState(payload);
-      rememberDriveSync(payload);
-      saveSyncPending(false);
-      setSyncLog(`変更をNINQクラウドへ保存しました。予定 ${state.entries.length}件`);
-      return;
-    }
-    rememberDriveSync(remotePayload);
-    saveSyncPending(false);
-    if (reason !== 'poll') setSyncLog(`NINQクラウドと同じ状態です。予定 ${state.entries.length}件`);
-  } catch (error) {
-    if (auto) saveSyncPending(true, reason || 'retry');
-    setSyncLog(auto ? 'NINQクラウド同期を次回オンライン時に再試行します' : (error.message || 'NINQクラウド同期に失敗しました'));
-  } finally {
-    firebaseSyncInFlight = false;
-    renderSyncScreen();
-    if (firebaseSyncQueued) {
-      firebaseSyncQueued = false;
-      scheduleFirebaseAutoSync({ delay: 900, reason: 'save' });
-    }
-  }
-}
+async function sendDeviceToFirebase() { return syncFirebaseCloud({reason:'save'}); }
+async function receiveDeviceFromFirebase() { return syncFirebaseCloud({reason:'receive'}); }
+async function syncFirebaseCloud(options = {}) { return safeSyncCloud(options); }
 function scheduleFirebaseAutoSync({ delay = 1800, message = '', reason = 'save' } = {}) {
   window.clearTimeout(firebaseSyncTimer);
   firebaseSyncTimer = null;
@@ -2201,38 +2113,11 @@ function isEditingSyncSensitiveField() {
   if (['checkbox', 'radio', 'file', 'button', 'submit'].includes(el.type || '')) return false;
   return true;
 }
-function scheduleDriveAutoSync({ delay = 1200, message = '', reason = 'save' } = {}) {
-  if (firebaseAvailable() || firebaseUser) {
-    scheduleFirebaseAutoSync({ delay, message, reason });
-    return;
-  }
-  window.clearTimeout(driveSyncTimer);
-  driveSyncTimer = null;
-  if (!state.settings.googleSyncEnabled || !state.settings.googleClientId) {
-    if (state.settings.googleClientId) setSyncLog('端末内に保存しました。自動同期をONにするとクラウドにも保存します');
-    return;
-  }
-  if (!navigator.onLine) {
-    saveSyncPending(true, reason);
-    setSyncLog('オフラインのため端末に一時保存しました。オンライン復帰後に自動送信します');
-    renderSyncScreen();
-    return;
-  }
-  saveSyncPending(true, reason);
-  if (message) setSyncLog(message);
-  else setSyncLog('端末内に保存しました。クラウドへ自動保存します...');
-  const wait = isEditingSyncSensitiveField() ? Math.max(delay, 8000) : delay;
-  driveSyncTimer = window.setTimeout(() => {
-    if (isEditingSyncSensitiveField()) {
-      scheduleDriveAutoSync({ delay: 8000, reason });
-      return;
-    }
-    syncGoogleDrive({ auto: true, reason });
-  }, wait);
-}
+function scheduleDriveAutoSync(options = {}) { return scheduleFirebaseAutoSync(options); }
 function localModifiedAt(targetState = state) {
   const dates = [
     targetState.settings?.updatedAt,
+    ...(targetState.invoices || []).map(invoice => invoice.issuedAt),
     ...(targetState.entries || []).flatMap((entry) => [entry.updatedAt, entry.createdAt]),
     ...Object.values(targetState.deletedEntryIds || {}),
     ...Object.values(targetState.deletedReceiptIds || {}),
@@ -2240,7 +2125,7 @@ function localModifiedAt(targetState = state) {
   return dates.length ? new Date(Math.max(...dates)).toISOString() : new Date(0).toISOString();
 }
 function syncPayload() {
-  return { app: 'NINQ', version: 2, syncedAt: new Date().toISOString(), modifiedAt: localModifiedAt(), state: normalizeState(state) };
+  return { app: 'NINQ', version: 3, syncedAt: new Date().toISOString(), modifiedAt: localModifiedAt(), state: normalizeState(state) };
 }
 function firebaseSyncPayload() {
   const payload = syncPayload();
@@ -2967,7 +2852,7 @@ function openSelectedDayGoogleCalendar() {
   setSyncLog(entries.length > 1 ? '選択日の先頭予定をGoogleカレンダーで開きました' : '選択日の予定をGoogleカレンダーで開きました');
 }
 function exportBackupJson() {
-  const payload = { app: 'NINQ', version: 1, exportedAt: new Date().toISOString(), state: normalizeState(state) };
+  const payload = { app: 'NINQ', version: 3, exportedAt: new Date().toISOString(), state: normalizeState(state) };
   downloadText(`ninq-backup-${toYmd(new Date())}.json`, JSON.stringify(payload, null, 2), 'application/json;charset=utf-8;');
   setSyncLog('バックアップを書き出しました');
 }
@@ -3068,29 +2953,20 @@ function mergeImportPayload(payload) {
 }
 function importBackupJson(file) {
   if (!file) return;
+  const owner = activeOwner;
   const reader = new FileReader();
   reader.onload = () => {
-    try {
-      const payload = JSON.parse(reader.result);
-      if (payload?.importMode === 'merge') {
-        mergeImportPayload(payload);
-        return;
-      }
-      state = normalizeState(payload.state || payload);
-      saveState();
-      renderAll();
-      showSaveFeedback('データを読み込みました');
-      setSyncLog('バックアップを読み込みました');
-    } catch (error) {
-      alert('バックアップを読み込めませんでした');
-    }
+    if (activeOwner !== owner) return;
+    try { prepareBackup(JSON.parse(reader.result)); }
+    catch (error) { alert(`バックアップを読み込めませんでした：${error.message}`); }
   };
+  reader.onerror = () => alert('ファイルを読み込めませんでした');
   reader.readAsText(file, 'utf-8');
 }
 function persistSettingsFromForm({ render = false, feedback = '', sections = [] } = {}) {
   const linesToObjects = (text, previous) => text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((label, index) => ({ id: previous[index]?.id || `exp${index + 1}`, label }));
   const companyRates = companyPresetValues();
-  const nextExpenseItems = linesToObjects(document.getElementById('st-expenses').value, expenseItems());
+  const nextExpenseItems = allExpenseItems();
   const checkedDayModalItems = [...document.querySelectorAll('[data-day-modal-item]:checked')].map((input) => input.dataset.dayModalItem);
   const dayModalItems = normalizeDayModalItems(checkedDayModalItems, nextExpenseItems);
   const salesTotalParts = {
@@ -3100,7 +2976,7 @@ function persistSettingsFromForm({ render = false, feedback = '', sections = [] 
   };
   state.settings = { ...state.settings, name: document.getElementById('st-name').value.trim(), postalCode: document.getElementById('st-postal').value.trim(), address: document.getElementById('st-addr').value.trim(), tel: document.getElementById('st-tel').value.trim(), companyName: document.getElementById('st-co').value.trim(), bank: document.getElementById('st-bank').value.trim(), branch: document.getElementById('st-branch').value.trim(), accountNo: document.getElementById('st-accno').value.trim(), accountName: document.getElementById('st-accname').value.trim(), invoiceNo: document.getElementById('st-invno').value.trim(), invoiceEnabled: document.getElementById('tgl-inv').classList.contains('on'), showSubcontract: document.getElementById('tgl-subcontract')?.classList.contains('on') !== false, uiSize: fontSizeLevel(document.getElementById('st-ui-size')?.value || DEFAULT_SETTINGS.uiSize), fontChoice: document.getElementById('st-font-choice')?.value || DEFAULT_SETTINGS.fontChoice, invoiceFontSize: fontSizeLevel(document.getElementById('st-invoice-font-size')?.value || state.settings.invoiceFontSize || DEFAULT_SETTINGS.invoiceFontSize), salesTotalParts, taxRate: num(document.getElementById('st-tax').value || 10), stampImage: state.settings.stampImage || '', defaultDayRate: 0, defaultNightRate: 0, defaultOtRate: 0, companyRates, companies: companyRates.map((item) => item.name), expenseItems: nextExpenseItems, dayModalItems };
   markSettingsSections(sections.length ? sections : Object.keys(SETTINGS_SECTIONS).filter((section) => section !== 'google'));
-  state.entries = state.entries.map((entry) => { const nextExpenses = {}; expenseItems().forEach((item) => { nextExpenses[item.id] = num(entry.expenses?.[item.id]); }); return { ...entry, expenses: nextExpenses }; });
+  // Keep historical expenses when settings change.
   applyDisplayPreferences();
   saveState();
   if (render) renderAll();
@@ -3216,17 +3092,19 @@ function gcalEntry(id) {
   const entry = state.entries.find((item) => item.id === id); if (!entry) return;
   window.open(googleCalendarUrl(entry), '_blank');
 }
-function csvCell(value) { const text = String(value ?? ''); return `"${text.replaceAll('"', '""')}"`; }
+function csvCell(value) { let text = String(value ?? ''); if (typeof value === 'string' && /^[=+@-]/.test(text)) text = "'" + text; return `"${text.replaceAll('"', '""')}"`; }
 function downloadCsv(filename, rows) { const csv = `\ufeff${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}`; const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; link.click(); URL.revokeObjectURL(link.href); }
 function reportFileBase(kind) {
   const month = `${cursor.getFullYear()}年${cursor.getMonth() + 1}月`;
   return `${month}${kind}`;
 }
 function exportDemenCsv() {
-  const rows = [['日付', '会社名', '現場名', '勤務区分', '売上方式', '人工', '単価', '人工計', '請負金額', '残業h', '残業計', ...expenseItems().map((item) => item.label), '合計']];
+  const issued = selectedInvoiceId ? state.invoices.find(item => item.id === selectedInvoiceId) : invoiceRevisionDraft;
+  if (issued && !invoiceRenderContext) return withInvoice(issued, () => exportDemenCsv());
+  const rows = [['日付', '会社名', '現場名', '勤務区分', '売上方式', '人工', '単価', '人工計', '請負金額', '残業h', '残業計', ...NinqData.expenseColumns(allExpenseItems(), entriesForInvoiceCompany()).map(col => col.label), '合計']];
   entriesForInvoiceCompany().forEach((entry) => {
     const calc = calcEntry(entry);
-    rows.push([entry.date, companySheetName(entry.company), entry.site, shiftLabel(entry.shift), billingTypeLabel(entry), calc.qty || '', calc.unitRate || '', calc.labor || '', calc.contractAmount || '', calc.otHours || '', calc.overtime || '', ...expenseItems().map((item) => num(entry.expenses?.[item.id])), calc.subtotal]);
+    rows.push([entry.date, companySheetName(entry.company), entry.site, shiftLabel(entry.shift), billingTypeLabel(entry), calc.qty || '', calc.unitRate || '', calc.labor || '', calc.contractAmount || '', calc.otHours || '', calc.overtime || '', ...NinqData.expenseColumns(allExpenseItems(), entriesForInvoiceCompany()).map(col => num(entry.expenses?.[col.item.id])), calc.subtotal]);
   });
   downloadCsv(`${reportFileBase('出面表')}.csv`, rows);
 }
@@ -3239,7 +3117,9 @@ function exportSubPaymentsCsv() {
   downloadCsv(`${monthKey(cursor)}_外注支払い.csv`, rows);
 }
 function exportInvoiceCsv() {
-  const totals = invoiceTotals(entriesForInvoiceCompany());
+  const issued = selectedInvoiceId ? state.invoices.find(item => item.id === selectedInvoiceId) : invoiceRevisionDraft;
+  if (issued && !invoiceRenderContext) return withInvoice(issued, () => exportInvoiceCsv());
+  const totals = invoiceRenderContext?.totals || invoiceTotals(entriesForInvoiceCompany());
   downloadCsv(`${reportFileBase('請求書')}.csv`, [['請求先', companyOfficialName(selectedCompany)], ['対象月', fmtMonth(cursor)], ['対象期間', companyBillingPeriodLabel(selectedCompany)], ['売上方式', '金額'], ['人工売上', totals.labor], ['請負金額', totals.contract], ['残業', totals.overtime], ['売上（税別）', totals.subtotal], ['消費税', totals.tax], ['諸経費', totals.expenseTotal], ['合計', totals.total]]);
 }
 function printView(kind) {
@@ -3268,7 +3148,7 @@ function printView(kind) {
 }
 function desktopSheetEntryFromRow(row, existing = null) {
   const value = (field) => row.querySelector(`[data-sheet-field="${field}"]`)?.value?.trim() || '';
-  const expenses = {};
+  const expenses = {...(existing?.expenses || {})};
   row.querySelectorAll('[data-sheet-field="expense"]').forEach((input) => { expenses[input.dataset.expenseId] = num(input.value); });
   const hasText = value('company') || value('site');
   const hasNumbers = ['qty', 'unitRate', 'otHours', 'otRate'].some((field) => num(value(field))) || Object.values(expenses).some((amount) => num(amount));
@@ -3335,9 +3215,9 @@ function bindEvents() {
   document.getElementById('fab-sub').addEventListener('click', () => { if (!subcontractEnabled()) return; closeDayModal(); openModal('sub'); });
   document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
   document.getElementById('add-company-btn')?.addEventListener('click', addCompanyPreset);
-  document.getElementById('add-expense-btn')?.addEventListener('click', () => addSettingListItem('st-expenses', 'st-expense-new'));
+  document.getElementById('add-expense-btn')?.addEventListener('click', () => addExpenseItem());
   ['st-company-new', 'st-company-sheet-new', 'st-company-official-new', 'st-company-day-new', 'st-company-night-new', 'st-company-ot-new'].forEach((id) => document.getElementById(id)?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); addCompanyPreset(); } }));
-  document.getElementById('st-expense-new')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); addSettingListItem('st-expenses', 'st-expense-new'); } });
+  document.getElementById('st-expense-new')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); addExpenseItem(); } });
   document.getElementById('save-google-settings-btn')?.addEventListener('click', saveGoogleSettings);
   document.getElementById('google-login-btn')?.addEventListener('click', loginFirebaseCloud);
   document.getElementById('google-auto-sync')?.addEventListener('change', () => {
@@ -3566,7 +3446,7 @@ function bindEvents() {
   });
 }
 
-function registerPwa() { if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('sw failed', error)); }
+function registerPwa() { installUpdateFlow(); }
 function shouldPollFirebaseCloud() {
   return !!(state.settings.googleSyncEnabled
     && firebaseUser
@@ -3597,66 +3477,22 @@ function initFirebaseCloudHooks() {
   if (firebaseInitStarted) return;
   firebaseInitStarted = true;
   window.addEventListener('ninq-firebase-ready', () => {
-    renderSyncScreen();
     const user = window.NinqFirebaseCloud?.currentUser?.();
-    if (user) {
-      firebaseUser = user;
-      if (state.settings.googleSyncEnabled && navigator.onLine) {
-        window.setTimeout(() => syncFirebaseCloud({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' }), 700);
-        scheduleFirebasePollSoon(2500);
-      }
-    }
-  });
-  window.addEventListener('ninq-firebase-auth', (event) => {
-    firebaseUser = event.detail?.user || null;
-    if (firebaseUser) {
-      state.settings.googleAccountEmail = firebaseUser.email || state.settings.googleAccountEmail || '';
-      state.settings.googleSyncEnabled = true;
-      markSettingsSections('google');
-      saveState();
-      setSyncLog(`${firebaseUser.email || 'Googleアカウント'} でNINQクラウドにログインしました`);
-      syncFirebaseCloud({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' });
-      scheduleFirebasePollSoon(2500);
-    } else {
-      renderSyncScreen();
-    }
-  });
-  window.addEventListener('ninq-firebase-error', (event) => {
-    setSyncLog(event.detail?.message || 'Firebaseでエラーが発生しました');
-  });
-  if (window.NinqFirebaseCloud) {
+    if (user) activateAccount(user);
     renderSyncScreen();
-    const user = window.NinqFirebaseCloud.currentUser?.();
-    if (user) {
-      firebaseUser = user;
-      if (state.settings.googleSyncEnabled && navigator.onLine) {
-        window.setTimeout(() => syncFirebaseCloud({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' }), 700);
-        scheduleFirebasePollSoon(2500);
-      }
-    }
-  }
+  });
+  window.addEventListener('ninq-firebase-auth', event => activateAccount(event.detail?.user || null));
+  window.addEventListener('ninq-firebase-error', event => { cloudIssue = event.detail?.message || 'ログインに失敗しました'; renderSaveStatus(); });
+  const user = window.NinqFirebaseCloud?.currentUser?.();
+  if (user) activateAccount(user);
 }
 function startCloudSyncHooks() {
-  initFirebaseCloudHooks();
-  startFirebaseCloudPolling();
-  window.addEventListener('online', () => {
-    if (!state.settings.googleSyncEnabled) return;
-    const pending = loadSyncPending();
-    setSyncLog(pending.pending ? 'オンラインに戻りました。未送信の変更を送信します...' : 'オンラインに戻りました。クラウドを確認します...');
-    if (firebaseUser || window.NinqFirebaseCloud) syncFirebaseCloud({ auto: true, reason: pending.pending ? 'save' : 'startup' });
-    else if (state.settings.googleClientId) syncGoogleDrive({ auto: true, reason: pending.pending ? 'save' : 'startup' });
-  });
-  window.addEventListener('offline', () => {
-    if (state.settings.googleSyncEnabled) setSyncLog('オフラインです。変更は端末に一時保存します');
-    renderSyncScreen();
-  });
-  if (state.settings.googleSyncEnabled && firebaseUser && navigator.onLine) {
-    window.setTimeout(() => syncFirebaseCloud({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' }), 900);
-  } else if (state.settings.googleSyncEnabled && state.settings.googleClientId && navigator.onLine && !window.NinqFirebaseCloud) {
-    window.setTimeout(() => syncGoogleDrive({ auto: true, reason: loadSyncPending().pending ? 'save' : 'startup' }), 900);
-  }
+  initFirebaseCloudHooks(); startFirebaseCloudPolling();
+  window.addEventListener('online', () => syncFirebaseCloud({auto:true,reason:'online'}));
+  window.addEventListener('offline', () => { renderSyncScreen(); renderSaveStatus(); });
 }
 function init() {
+  initSafetyUi();
   bindEvents();
   renderAll();
   window.setTimeout(() => { cleanupLegacyDisplayPreferences(); applyDisplayPreferences(); }, 0);

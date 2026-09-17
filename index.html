@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json?v=35">
 <link rel="icon" href="icon-192.png?v=34">
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=34">
-  <link rel="stylesheet" href="styles.css?v=93">
+  <link rel="stylesheet" href="styles.css?v=96">
 </head>
 <body>
 <div id="sc-cal" class="screen active">
@@ -40,6 +40,9 @@
     <span class="month-label" id="cal-mnav"></span>
     <button id="next-month-btn" aria-label="次月">&#8250;</button>
   </div>
+  <div id="home-storage-status" class="storage-banner" role="status" aria-live="polite"></div>
+  <div id="update-notice" class="safety-panel" hidden></div>
+  <aside id="onboarding" class="safety-panel" hidden></aside>
   <div class="cal-grid" id="cal-grid"></div>
   <div id="day-entries" class="hidden"></div>
   <div class="sum-grid" id="sum-grid"></div>
@@ -92,6 +95,7 @@
     <button type="button" data-invoice-view="annual">年次集計</button>
   </div>
   <div class="co-tabs" id="co-tabs"></div>
+  <details id="invoice-history" class="safety-panel"></details>
   <div id="inv-body"></div>
 </div>
 
@@ -295,13 +299,16 @@
   </div>
 </div>
 
-  <script src="app.js?v=153"></script>
-  <script type="module" src="firebase-sync.js?v=2"></script>
+  <section id="safety-sync" class="safety-panel hidden"></section>
+  <script src="data-core.js?v=2"></script>
+  <script src="app.js?v=154"></script>
+  <script src="safety-ui.js?v=3"></script>
+  <script type="module" src="firebase-sync.js?v=4"></script>
   <script src="brand.js?v=35"></script>
   <script src="calendar-layout.js?v=28"></script>
   <script src="range-entries.js?v=28"></script>
   <script src="calendar-connections.js?v=51"></script>
-  <script src="navigation-controls.js?v=41"></script>
+  <script src="navigation-controls.js?v=42"></script>
   <script src="settings-polish.js?v=2"></script>
 </body>
 </html>

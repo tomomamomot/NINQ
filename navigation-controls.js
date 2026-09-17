@@ -224,6 +224,7 @@
 
   function goToScreen(screen) {
     const previous = currentScreen();
+    if (previous === 'st' && typeof flushSettingsAutosave === 'function') flushSettingsAutosave();
     try { activeScreen = screen; } catch (error) { return; }
     if (screen !== 'cal' && typeof closeDayModal === 'function') closeDayModal();
     if (typeof renderAll === 'function') renderAll();
