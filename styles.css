@@ -447,3 +447,6 @@ body[data-font="thin"] #sc-cal .month-label{font-weight:700}
 .invoice-tool-row{flex-wrap:wrap}
 @media print{.demen-sheet td.left,.demen-sheet th.demen-title-person{white-space:normal!important;overflow-wrap:anywhere;overflow:visible!important;text-overflow:clip!important;height:auto!important}.demen-sheet td.left{padding-top:4px!important;padding-bottom:4px!important}.demen-sheet tr{break-inside:avoid}.demen-sheet tfoot{display:table-row-group}}
 @media print{.save-status,.safety-panel,#onboarding,#update-notice,#invoice-history{display:none!important}.invoice-table thead,.extra-expense-sheet thead{display:table-header-group}.invoice-table tr,.extra-expense-sheet tr{break-inside:avoid}.extra-expense-sheet{width:100%;padding-top:6mm}.invoice-to,.invoice-sender{overflow-wrap:anywhere}.invoice-scroll{display:block!important}.invoice-sheet{break-inside:auto!important}}
+
+/* Keep detailed validation messages readable without covering the calendar. */
+.storage-banner,.sync-log{white-space:pre-line;max-height:30vh;overflow-y:auto}

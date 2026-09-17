@@ -86,13 +86,25 @@ async function syncState(payload, {uid, expectedGeneration, merge}) {
     const snapshot = await transaction.get(ref);
     if (currentUser?.uid !== uid) throw new Error('ログイン状態が変わりました');
     const remote = snapshot.exists() ? snapshot.data().payload : null;
-    if (remote) window.NinqData.validateBackup(remote);
+    if (remote) window.NinqData.validateBackup(remote, {skipEntryValues:true});
+    window.NinqData.validateBackup(payload);
     const remoteGeneration = remote?.state?.restoreGeneration || 'initial';
     const restore = payload.state.pendingRestore;
-    if (remote && remoteGeneration !== expectedGeneration && remoteGeneration !== payload.state.restoreGeneration) return {conflict:true, payload:remote};
+    if (remote && remoteGeneration !== expectedGeneration && remoteGeneration !== payload.state.restoreGeneration) {
+      window.NinqData.validateBackup(remote);
+      return {conflict:true, payload:remote};
+    }
     if (remote?.version > 3) throw new Error('アプリを更新してください');
     const next = JSON.parse(JSON.stringify(payload));
-    if (remote && !(restore && remoteGeneration === restore.base)) next.state = merge(payload.state, remote.state || remote);
+    if (remote && !(restore && remoteGeneration === restore.base)) {
+      const remoteState = remote.state || remote;
+      // Resolve edits/deletions before value validation, without normalizing away bad values.
+      const deleted = window.NinqData.mergeMaps(payload.state.deletedEntryIds, remoteState.deletedEntryIds);
+      const entries = window.NinqData.mergeItems(payload.state.entries, remoteState.entries, deleted);
+      window.NinqData.validateBackup({...remote, state:{...remoteState, entries}});
+      next.state = merge(payload.state, remoteState);
+    }
+    window.NinqData.validateBackup(next);
     next.state.pendingRestore = null;
     if (remote && JSON.stringify(next.state) === JSON.stringify(remote.state)) return {conflict:false,payload:remote,generation:remoteGeneration};
     next.generation = next.state.restoreGeneration || 'initial';

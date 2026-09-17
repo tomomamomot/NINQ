@@ -84,8 +84,8 @@ test('closing date and multi-day contract retain one charge',()=>{
  const {run}=app();run(`state.settings.companyRates=[{id:'co',name:'Test',closingDay:20}];cursor=new Date(2026,8,1);`);assert.equal(run('companyBillingRange(selectedCompany).start'),'2026-08-21');assert.equal(run('companyBillingRange(selectedCompany).end'),'2026-09-20');
  run(`state.entries=[normalizeEntry(${JSON.stringify(entry('a',{date:'2026-09-05',billingType:'contract',rangeGroupId:'g',rangeStart:'2026-09-05',rangeEnd:'2026-09-06',contractAmount:100000}))}),normalizeEntry(${JSON.stringify(entry('b',{billingType:'contract',rangeGroupId:'g',rangeStart:'2026-09-05',rangeEnd:'2026-09-06',contractAmount:100000}))})];`);assert.equal(run('invoiceTotals(state.entries).contract'),100000);
 });
-function cloud(){
- let saved=null,revision=0,retries=0;
+function cloud(initial=null){
+ let saved=initial,revision=0,retries=0;
  const context=vm.createContext({TextEncoder,Date,JSON,window:{NinqData:data},currentUser:{uid:'A'},db:{},serverTimestamp:()=>0,doc:()=>({}),runTransaction:async(db,fn)=>{
    for(let attempt=0;attempt<5;attempt++){
      const readRevision=revision,read=saved;let write;
@@ -132,4 +132,30 @@ test('generate long-name multipage print layout fixtures',()=>{
  const sheets=run('buildInvoiceSheet(state.entries,invoiceTotals(state.entries),false)+buildDemenSheet(state.entries,invoiceTotals(state.entries),false)');assert.match(sheets,/追加経費 明細/);assert.match(sheets,/経費項目8/);
  const css=fs.readFileSync('styles.css','utf8').replaceAll('@media print','@media screen');fs.mkdirSync('review/print-qa',{recursive:true});
  for(const kind of ['invoice','demen'])fs.writeFileSync(`review/print-qa/${kind}.html`,`<!doctype html><html lang="ja"><meta charset="utf-8"><title>印刷レイアウト検証 ${kind}</title><style>${css}</style><body><div id="sc-inv" class="screen print-active printing-${kind}">${sheets}</div></body></html>`);
+});
+
+
+test('diagnostics identify date, field and negative value without accusatory wording',()=>{
+ const p={entries:[entry('bad',{date:'2026-09-08',otRate:-3,otHours:0})],settings:{}};
+ assert.throws(()=>data.validateBackup(p),error=>/2026-09-08/.test(error.message)&&/残業単価 = -3/.test(error.message)&&/可能性/.test(error.message)&&!error.message.includes('不正'));
+ assert.equal(p.entries[0].otRate,-3);
+});
+test('diagnostics distinguish text numbers, empty values and expense names',()=>{
+ assert.throws(()=>data.validateBackup({entries:[entry('a',{qty:'1',otRate:null,expenses:{x:-2}})],settings:{expenseItems:[{id:'x',label:'交通費'}]}}),error=>/文字形式/.test(error.message)&&/値が空/.test(error.message)&&/交通費/.test(error.message));
+});
+const oldInvalidCloud=()=>({payload:{version:1,state:{entries:[entry('bad',{date:'2026-09-08',otRate:-3})],settings:{},restoreGeneration:'initial'}}});
+test('deleting an invalid legacy cloud entry succeeds before value validation',async()=>{
+ const original=oldInvalidCloud(),c=cloud(original);
+ await c.write({version:3,state:{entries:[],settings:{},restoreGeneration:'initial',deletedEntryIds:{bad:'2026-09-18T00:00:00Z'}}});
+ assert.equal(c.get().payload.state.entries.length,0);assert.equal(original.payload.state.entries[0].otRate,-3);
+});
+test('correcting invalid cloud data succeeds but stale deletion cannot hide newer data',async()=>{
+ const c=cloud(oldInvalidCloud());await c.write({version:3,state:{entries:[entry('bad',{date:'2026-09-08',otRate:0,updatedAt:'2026-09-18T00:00:00Z'})],settings:{},restoreGeneration:'initial'}});assert.equal(c.get().payload.state.entries[0].otRate,0);
+ const stale=cloud(oldInvalidCloud());await assert.rejects(stale.write({version:3,state:{entries:[],settings:{},deletedEntryIds:{bad:'2026-09-01T00:00:00Z'},restoreGeneration:'initial'}}),/残業単価 = -3/);
+});
+test('unresolved cloud error and a different generation cannot be bypassed',async()=>{
+ const original=oldInvalidCloud(),c=cloud(original);
+ await assert.rejects(c.write({version:3,state:{entries:[],settings:{},restoreGeneration:'initial'}}),/2026-09-08/);assert.equal(c.get(),original);
+ original.payload.state.restoreGeneration='elsewhere';
+ await assert.rejects(c.write({version:3,state:{entries:[],settings:{},restoreGeneration:'initial',deletedEntryIds:{bad:'2026-09-18T00:00:00Z'}}}),/残業単価/);assert.equal(c.get(),original);
 });
