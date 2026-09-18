@@ -9,7 +9,7 @@
 
     const newShortName = document.getElementById('st-company-new');
     const newSheetName = document.getElementById('st-company-sheet-new');
-    if (newShortName) newShortName.placeholder = '略名 例: マル';
+    if (newShortName) newShortName.placeholder = '略名（カレンダー表示名）';
     if (newSheetName) newSheetName.placeholder = '出面表表示名 例: マルヒロアート';
     if (newOfficialName) newOfficialName.placeholder = '請求書正式名称 例: 株式会社マルヒロアート';
     document.querySelectorAll('[data-company-preset-field="sheetName"]').forEach((input) => {
