@@ -154,7 +154,7 @@ function installUpdateFlow() {
   function showUpdate(message, worker) {
     const host = document.getElementById('update-notice'); if (!host) return;
     host.hidden = false; host.textContent = message;
-    const button = document.createElement('button'); button.textContent = '保存後に更新';
+    const button = document.createElement('button'); button.textContent = '最新版に更新';
     button.onclick = () => {
       if (document.getElementById('modal-bg')?.classList.contains('open') || document.activeElement?.matches('input,textarea,select') || firebaseSyncInFlight) {
         alert('入力画面を保存して閉じ、同期の終了後に更新してください'); return;
