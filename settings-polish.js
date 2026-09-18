@@ -1,7 +1,7 @@
 (function () {
   function polishSettingsFields() {
     const newOfficialName = document.getElementById('st-company-official-new');
-    if (newOfficialName) newOfficialName.placeholder = '請求書記載名 例: 株式会社山田建設';
+    if (newOfficialName) newOfficialName.placeholder = '請求書正式名称 例：株式会社青空建設';
 
     document.querySelectorAll('[data-company-preset-field="officialName"]').forEach((input) => {
       input.placeholder = '請求書記載名';
@@ -9,14 +9,14 @@
 
     const newShortName = document.getElementById('st-company-new');
     const newSheetName = document.getElementById('st-company-sheet-new');
-    if (newShortName) newShortName.placeholder = '略名（カレンダー表示名）';
-    if (newSheetName) newSheetName.placeholder = '出面表表示名 例: マルヒロアート';
-    if (newOfficialName) newOfficialName.placeholder = '請求書正式名称 例: 株式会社マルヒロアート';
+    if (newShortName) newShortName.placeholder = '略名（カレンダー表示名） 例：青空';
+    if (newSheetName) newSheetName.placeholder = '出面表表示名 例：青空建設';
+    if (newOfficialName) newOfficialName.placeholder = '請求書正式名称 例：株式会社青空建設';
     document.querySelectorAll('[data-company-preset-field="sheetName"]').forEach((input) => {
-      input.placeholder = '出面表表示名';
+      input.placeholder = '出面表表示名 例：青空建設';
     });
     document.querySelectorAll('[data-company-preset-field="officialName"]').forEach((input) => {
-      input.placeholder = '請求書正式名称';
+      input.placeholder = '請求書正式名称 例：株式会社青空建設';
     });
 
     ['st-bank', 'st-branch', 'st-accno', 'st-accname'].forEach((id) => {

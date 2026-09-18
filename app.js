@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.18-5';
+const APP_VERSION = 'v2026.09.18-6';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -500,7 +500,7 @@ function renderCompanyPresetList() {
         </div>
       </div>
       <div class="company-rate-edit ${preset.id === openCompanyPresetId ? '' : 'hidden'}">
-        <input class="st-input company-rate-name-input" data-company-preset-field="name" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.name)}" placeholder="略名（カレンダー表示名）">
+        <input class="st-input company-rate-name-input" data-company-preset-field="name" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.name)}" placeholder="略名（カレンダー表示名） 例：青空">
         <input class="st-input company-rate-name-input" data-company-preset-field="officialName" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.officialName || preset.name)}" placeholder="請求書・出面表の正式名称">
         <input class="st-input" type="number" inputmode="numeric" data-company-preset-field="dayRate" data-company-preset-id="${escapeHtml(preset.id)}" value="${rateFieldValue(preset.dayRate)}" placeholder="日勤">
         <input class="st-input" type="number" inputmode="numeric" data-company-preset-field="nightRate" data-company-preset-id="${escapeHtml(preset.id)}" value="${rateFieldValue(preset.nightRate)}" placeholder="夜勤">
@@ -527,9 +527,9 @@ renderCompanyPresetList = function renderCompanyPresetList() {
         </div>
       </div>
       <div class="company-rate-edit ${preset.id === openCompanyPresetId ? '' : 'hidden'}">
-        <input class="st-input company-rate-name-input" data-company-preset-field="sheetName" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.sheetName || companySheetNameFromOfficial(preset.officialName || preset.name))}" placeholder="出面表表示名">
-        <input class="st-input company-rate-name-input" data-company-preset-field="name" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.name)}" placeholder="略名（カレンダー表示名）">
-        <input class="st-input company-rate-name-input" data-company-preset-field="officialName" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.officialName || preset.name)}" placeholder="請求書正式名称">
+        <input class="st-input company-rate-name-input" data-company-preset-field="sheetName" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.sheetName || companySheetNameFromOfficial(preset.officialName || preset.name))}" placeholder="出面表表示名 例：青空建設">
+        <input class="st-input company-rate-name-input" data-company-preset-field="name" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.name)}" placeholder="略名（カレンダー表示名） 例：青空">
+        <input class="st-input company-rate-name-input" data-company-preset-field="officialName" data-company-preset-id="${escapeHtml(preset.id)}" value="${escapeHtml(preset.officialName || preset.name)}" placeholder="請求書正式名称 例：株式会社青空建設">
         <select class="st-select company-honorific-select" data-company-preset-field="invoiceHonorific" data-company-preset-id="${escapeHtml(preset.id)}" aria-label="請求書敬称"><option value="御中" ${normalizeInvoiceHonorific(preset.invoiceHonorific) === '御中' ? 'selected' : ''}>御中</option><option value="様" ${normalizeInvoiceHonorific(preset.invoiceHonorific) === '様' ? 'selected' : ''}>様</option></select>
         <input class="st-input" type="number" inputmode="numeric" data-company-preset-field="dayRate" data-company-preset-id="${escapeHtml(preset.id)}" value="${rateFieldValue(preset.dayRate)}" placeholder="日勤">
         <input class="st-input" type="number" inputmode="numeric" data-company-preset-field="nightRate" data-company-preset-id="${escapeHtml(preset.id)}" value="${rateFieldValue(preset.nightRate)}" placeholder="夜勤">
@@ -684,14 +684,14 @@ function updateCompanyPresetField(id, field, value) {
 function ensureCompanySheetNameInput() {
   const nameInput = document.getElementById('st-company-new');
   const officialInput = document.getElementById('st-company-official-new');
-  if (nameInput) nameInput.placeholder = '略名（カレンダー表示名）';
-  if (officialInput) officialInput.placeholder = '請求書正式名称 例: 株式会社マルヒロアート';
+  if (nameInput) nameInput.placeholder = '略名（カレンダー表示名） 例：青空';
+  if (officialInput) officialInput.placeholder = '請求書正式名称 例：株式会社青空建設';
   if (!nameInput) return;
   if (!document.getElementById('st-company-sheet-new')) {
     const input = document.createElement('input');
     input.id = 'st-company-sheet-new';
     input.className = 'st-input';
-    input.placeholder = '出面表表示名 例: マルヒロアート';
+    input.placeholder = '出面表表示名 例：青空建設';
     nameInput.insertAdjacentElement('beforebegin', input);
   }
   if (!document.getElementById('st-company-honorific-new') && officialInput) {
