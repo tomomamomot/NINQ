@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow"><title>NINQ｜デザインを試す</title>
+  <link rel="stylesheet" href="./preview-v1.css">
+  <script defer src="./preview-model-v1.js"></script><script defer src="./preview-v1.js"></script>
+</head>
+<body data-theme="business">
+  <header class="preview-bar">
+    <div class="preview-meta"><strong>デザイン試作・架空データ</strong><span>入力内容は再読み込みでリセット</span><button id="reset" class="text-button">試作をリセット</button></div>
+    <div class="design-picker" role="group" aria-label="デザインの比較">
+      <button data-theme-choice="business" aria-pressed="true"><span>01</span> すっきり業務型</button>
+      <button data-theme-choice="notebook" aria-pressed="false"><span>02</span> 現場手帳型</button>
+      <button data-theme-choice="dashboard" aria-pressed="false"><span>03</span> 経営型</button>
+    </div>
+  </header>
+  <div class="app-shell">
+    <aside class="sidebar"><a class="brand" href="./">NINQ<span>現場から、請求まで。</span></a><div class="workspace"><span class="avatar">青</span><div>青空ワークス<small>サンプルの仕事帳</small></div></div><nav aria-label="画面"><button data-page="schedule" aria-current="page"><span>▦</span> 予定・人工</button><button data-page="invoice"><span>▤</span> 請求書</button><button data-page="settings"><span>⚙</span> 会社・単価</button></nav><div class="sidebar-foot">あなたに合う使い心地を。<br>同じ予定で3案を比べられます。</div></aside>
+    <main id="main">
+      <header class="page-heading"><div><p class="eyebrow" id="theme-kicker">WORK CALENDAR</p><h1 id="page-title">予定と人工</h1><p id="design-description">月の流れと、その日の仕事をひと目で。</p></div><button class="primary" id="new-entry">＋ 予定を追加</button></header>
+      <section id="schedule-view">
+        <div class="month-toolbar"><div class="month-title"><button class="icon-button" data-month="-1" aria-label="前月">‹</button><h2 id="month-title"></h2><button class="icon-button" data-month="1" aria-label="次月">›</button></div><button id="today" class="secondary">今日へ</button></div>
+        <div class="schedule-layout"><section class="metrics" id="metrics" aria-label="選択月の集計"></section><section class="calendar panel"><div class="panel-heading"><h2>月の予定</h2><span class="muted">日付を押して確認</span></div><div class="weekdays" aria-hidden="true"><span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span></div><div class="calendar-grid" id="calendar-grid" role="group" aria-label="月間カレンダー"></div><div class="calendar-legend"><i></i> 人工の記録 <span>金額は税抜</span></div></section><aside class="day-panel panel" id="day-panel"></aside></div>
+      </section>
+      <section id="invoice-view" hidden><div class="invoice-controls panel"><label>請求する会社<select id="invoice-company"></select></label><label>対象月<input id="invoice-month" type="month" required min="2000-01" max="2100-12"></label><span class="sample-pill">見本・発行されません</span></div><div id="invoice-body"></div></section>
+      <section id="settings-view" hidden><div class="section-intro"><div><h2>取引会社と単価</h2><p>会社ごとに、いつもの単価を登録。</p></div><button class="primary" id="new-company">＋ 会社を登録</button></div><div class="company-list" id="company-list"></div><p class="settings-note">ここで登録する情報も試作専用です。実際の会社情報は入力せず、架空の名前でお試しください。</p></section>
+    </main>
+  </div>
+  <dialog id="entry-dialog"><form id="entry-form"><div class="dialog-head"><div><p class="eyebrow">WORK RECORD</p><h2 id="entry-title">予定を追加</h2></div><button type="button" data-close="entry-dialog" class="icon-button" aria-label="閉じる">×</button></div><input type="hidden" name="id"><div class="form-grid"><label>日付<input name="date" type="date" required min="2000-01-01" max="2100-12-31"></label><label>会社<select name="companyId" required></select></label><label class="full">現場名<input name="site" required maxlength="80" placeholder="例：ひだまり住宅 新築工事"></label><label>人工<input name="qty" type="number" min="0" max="100" step="0.25" required><small>例：1日なら1、半日なら0.5</small></label><label>人工単価（円）<input name="rate" type="number" min="0" max="10000000" step="1" required></label></div><details id="entry-extras"><summary>残業・経費・メモ</summary><div class="form-grid"><label>残業時間（時間）<input name="otHours" type="number" min="0" max="24" step="0.25"></label><label>残業単価（円）<input name="otRate" type="number" min="0" max="1000000" step="1"></label><label class="full">経費合計（円）<input name="expense" type="number" min="0" max="10000000" step="1"><small>試作では交通費・材料費などの合計を入力</small></label><label class="full">メモ<textarea name="notes" rows="2" maxlength="300" placeholder="例：8時に現場集合"></textarea></label></div></details><div class="form-preview" id="entry-total" aria-live="polite"></div><div class="dialog-actions"><button type="button" id="delete-entry" class="danger" hidden>この予定を削除</button><button type="button" data-close="entry-dialog" class="secondary">キャンセル</button><button class="primary" type="submit">試作に保存</button></div><p class="dialog-note">この試作内だけに反映されます。</p></form></dialog>
+  <dialog id="company-dialog"><form id="company-form"><div class="dialog-head"><div><p class="eyebrow">COMPANY</p><h2>会社を登録</h2></div><button type="button" data-close="company-dialog" class="icon-button" aria-label="閉じる">×</button></div><div class="form-grid"><label class="full">略名（カレンダー表示名）<input name="name" required maxlength="20" placeholder="例：青空"></label><label class="full">請求書正式名称<input name="official" required maxlength="80" placeholder="例：株式会社青空建設"></label><label>人工単価（円）<input name="rate" type="number" min="0" max="10000000" step="1" value="25000" required></label><label>残業単価（円）<input name="otRate" type="number" min="0" max="1000000" step="1" value="3500" required></label></div><div class="dialog-actions"><button type="button" data-close="company-dialog" class="secondary">キャンセル</button><button class="primary" type="submit">試作に登録</button></div><p class="dialog-note">架空の会社名でお試しください。</p></form></dialog>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title">試作の操作を確認</h2><p id="confirm-message" style="margin-top:16px;line-height:1.8"></p><div class="dialog-actions"><button class="secondary" data-close="confirm-dialog">キャンセル</button><button class="primary" id="confirm-action">実行する</button></div></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body></html>
