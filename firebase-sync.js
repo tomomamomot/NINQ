@@ -42,6 +42,7 @@ const provider = new GoogleAuthProvider();
 provider.setCustomParameters({ prompt: 'select_account' });
 
 let currentUser = null;
+let authResolved = false;
 
 function publicUser(user) {
   return user ? {
@@ -121,14 +122,16 @@ window.NinqFirebaseCloud = {
   signIn,
   signOut: () => signOut(auth),
   currentUser: () => publicUser(currentUser),
+  authResolved: () => authResolved,
   readState,
   syncState,
 };
 
 onAuthStateChanged(auth, (user) => {
   currentUser = user;
+  authResolved = true;
   emit('ninq-firebase-auth', { user: publicUser(user) });
-});
+}, (error) => emit('ninq-firebase-error', {message:error.message || 'ログイン状態を確認できません'}));
 
 getRedirectResult(auth).catch((error) => {
   emit('ninq-firebase-error', { message: error.message || 'Firebaseログインに失敗しました' });

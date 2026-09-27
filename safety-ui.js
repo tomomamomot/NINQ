@@ -1,3 +1,18 @@
+// Keep all account data hidden until Firebase resolves the signed-in user.
+function beginAccountStartup() {
+  document.getElementById('account-startup-retry')?.addEventListener('click', () => window.location.reload());
+  accountStartupTimer = window.setTimeout(showAccountStartupError, 15000);
+}
+function showAccountStartupError() {
+  if (accountReady) return;
+  document.getElementById('account-startup-message').textContent = 'ログイン状態を確認できません。接続を確認して再読み込みしてください。保存データは変更していません。';
+  document.getElementById('account-startup-retry').hidden = false;
+}
+function finishAccountStartup() {
+  window.clearTimeout(accountStartupTimer);
+  document.body.classList.remove('account-loading');
+  document.getElementById('account-startup').hidden = true;
+}
 // Account lifecycle, recovery and issued documents. Loaded after app.js, before DOMContentLoaded.
 function mergeSafeStates(a, b) {
   return NinqData.mergeStates(normalizeState(a), normalizeState(b), mergeSettingsBySection);
@@ -5,7 +20,7 @@ function mergeSafeStates(a, b) {
 function accountMatches(uid, epoch) { return activeOwner === uid && firebaseUser?.uid === uid && accountEpoch === epoch; }
 function activateAccount(user) {
   const owner = user?.uid || 'guest';
-  if (owner === activeOwner) { firebaseUser = user; renderAll(); return; }
+  if (owner === activeOwner && accountReady) { firebaseUser = user; renderAll(); return; }
   if (storageFailure && !saveState()) {
     try { saveRecovery('アカウント切り替え前の未保存データ'); }
     catch (error) { downloadText('ninq-unsaved.json', JSON.stringify({app:'NINQ',version:3,state}), 'application/json'); }
@@ -15,7 +30,7 @@ function activateAccount(user) {
   settingsAutosaveTimer = null; settingsAutosaveSections.clear();
   firebaseSyncInFlight = false; firebaseSyncQueued = false; driveSyncInFlight = false; driveSyncQueued = false;
   googleAccessTokens.clear();
-  firebaseUser = user; activeOwner = owner; storageFailure = ''; cloudIssue = '';
+  firebaseUser = user; activeOwner = owner; accountReady = true; storageFailure = ''; cloudIssue = '';
   state = loadState(); localRevision = 0;
   selectedInvoiceId = ''; invoiceRevisionDraft = null; pendingBackup = null;
   document.getElementById('backup-preview')?.remove();
@@ -26,6 +41,7 @@ function activateAccount(user) {
   document.getElementById('sync-log').textContent = '';
   if (user) { state.settings.googleSyncEnabled = true; saveState(); }
   renderAll();
+  finishAccountStartup();
   if (user) syncFirebaseCloud({auto:true, reason:'startup'});
 }
 async function safeSyncCloud({auto = false, reason = ''} = {}) {

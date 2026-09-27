@@ -1,8 +1,8 @@
 const {test}=require('node:test'), assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {randomUUID}=require('node:crypto'), data=require('../data-core.js');
 const entry=(id,extra={})=>({id,date:'2026-09-06',company:'Test',qty:1,unitRate:20000,updatedAt:'2026-09-06T00:00:00Z',...extra});
-function app(){
-  const memory=new Map(),nodes=new Map();
+function app(initial=[]){
+  const memory=new Map(initial),nodes=new Map();
   const el=()=>({value:'',textContent:'',innerHTML:'',dataset:{},style:{removeProperty(){}},classList:{contains:()=>false,add(){},remove(){},toggle(){}},remove(){},appendChild(){}});
   const localStorage={getItem:k=>memory.get(k)??null,setItem:(k,v)=>memory.set(k,v),removeItem:k=>memory.delete(k),key:i=>[...memory.keys()][i],get length(){return memory.size;}};
   const context=vm.createContext({console,crypto:{randomUUID},TextEncoder,localStorage,navigator:{onLine:true},
@@ -11,8 +11,9 @@ function app(){
   for(const path of ['data-core.js','app.js','safety-ui.js'])vm.runInContext(fs.readFileSync(path,'utf8'),context,{filename:path});
   vm.runInContext('renderAll=()=>{};renderSyncScreen=()=>{};renderSaveStatus=()=>{};showSaveFeedback=()=>{};',context);
   const run=code=>vm.runInContext(code,context);
-  run(`state=normalizeState({entries:[${JSON.stringify(entry('a'))}],settings:{}});selectedCompany='Test';`);
-  return {run,memory,context,nodes};
+  const startupCount=run('state.entries.length');
+  run(`accountReady=true;state=normalizeState({entries:[${JSON.stringify(entry('a'))}],settings:{}});selectedCompany='Test';`);
+  return {run,memory,context,nodes,startupCount};
 }
 test('invalid JSON and versions leave data untouched',()=>{
  const {run}=app();run(`saveState();importBackupJson('{}');`);assert.equal(run('state.entries.length'),1);assert.equal(run('pendingBackup'),null);
@@ -158,4 +159,29 @@ test('unresolved cloud error and a different generation cannot be bypassed',asyn
  await assert.rejects(c.write({version:3,state:{entries:[],settings:{},restoreGeneration:'initial'}}),/2026-09-08/);assert.equal(c.get(),original);
  original.payload.state.restoreGeneration='elsewhere';
  await assert.rejects(c.write({version:3,state:{entries:[],settings:{},restoreGeneration:'initial',deletedEntryIds:{bad:'2026-09-18T00:00:00Z'}}}),/残業単価/);assert.equal(c.get(),original);
+});
+
+
+test('startup does not load guest records before identity is resolved',()=>{
+ const saved=JSON.stringify({entries:[entry('old-guest')],settings:{}});
+ const a=app([['ninq-v2',saved]]);assert.equal(a.startupCount,0);
+ a.run(`accountReady=false;state=clone(DEFAULT_STATE);`);assert.equal(a.run('saveState()'),false);assert.equal(a.memory.get('ninq-v2'),saved);
+ a.memory.set('ninq-v2:A',JSON.stringify({entries:[entry('account')],settings:{}}));
+ a.run(`activateAccount({uid:'A'});`);assert.equal(a.run('state.entries[0].id'),'account');assert.equal(a.run('accountReady'),true);assert.equal(a.nodes.get('account-startup').hidden,true);
+});
+test('confirmed signed-out user loads guest data and dismisses startup gate',()=>{
+ const a=app([['ninq-v2',JSON.stringify({entries:[entry('guest')],settings:{}})]]);
+ a.run(`accountReady=false;state=clone(DEFAULT_STATE);activateAccount(null);`);
+ assert.equal(a.run('state.entries[0].id'),'guest');assert.equal(a.run('accountReady'),true);assert.equal(a.nodes.get('account-startup').hidden,true);
+});
+test('auth confirmation completed before listeners is replayed including signed-out state',()=>{
+ const a=app([['ninq-v2',JSON.stringify({entries:[entry('guest')],settings:{}})]]);
+ a.run(`accountReady=false;state=clone(DEFAULT_STATE);window.NinqFirebaseCloud={currentUser:()=>null,authResolved:()=>true};initFirebaseCloudHooks();`);
+ assert.equal(a.run('accountReady'),true);assert.equal(a.run('state.entries[0].id'),'guest');
+});
+test('unknown identity and startup timeout never reveal or overwrite guest data',()=>{
+ const a=app();a.run(`accountReady=false;state=clone(DEFAULT_STATE);window.NinqFirebaseCloud={currentUser:()=>null,authResolved:()=>false};initFirebaseCloudHooks();showAccountStartupError();`);
+ assert.equal(a.run('accountReady'),false);assert.equal(a.run('state.entries.length'),0);assert.equal(a.memory.size,0);assert.equal(a.nodes.get('account-startup-retry').hidden,false);
+ assert.match(a.nodes.get('account-startup-message').textContent,/再読み込み/);
+ a.run(`accountReady=true;document.getElementById('account-startup-message').textContent='unchanged';showAccountStartupError();`);assert.equal(a.nodes.get('account-startup-message').textContent,'unchanged');
 });

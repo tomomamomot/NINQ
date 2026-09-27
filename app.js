@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.18-6';
+const APP_VERSION = 'v2026.09.28-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -32,6 +32,8 @@ const SETTINGS_SECTIONS = {
 };
 
 let activeOwner = 'guest';
+let accountReady = false;
+let accountStartupTimer = null;
 let storageFailure = '';
 let storageBlocked = false;
 let localRevision = 0;
@@ -42,7 +44,7 @@ let invoiceRevisionDraft = null;
 let invoiceRenderContext = null;
 let pendingBackup = null;
 let pendingBackupOwner = '';
-let state = loadState();
+let state = clone(DEFAULT_STATE);
 let cursor = startOfMonth(new Date());
 let selectedDate = toYmd(new Date());
 let selectedCompany = '';
@@ -248,6 +250,7 @@ function migrateLegacy(oldData) {
   return migrated;
 }
 function saveState(nextState = state) {
+  if (!accountReady) return false;
   if (storageBlocked) { renderSaveStatus(); return false; }
   try {
     localStorage.setItem(scopedKey(STORE_KEY), JSON.stringify(normalizeState(nextState)));
@@ -3478,13 +3481,13 @@ function initFirebaseCloudHooks() {
   firebaseInitStarted = true;
   window.addEventListener('ninq-firebase-ready', () => {
     const user = window.NinqFirebaseCloud?.currentUser?.();
-    if (user) activateAccount(user);
+    if (window.NinqFirebaseCloud?.authResolved?.()) activateAccount(user);
     renderSyncScreen();
   });
   window.addEventListener('ninq-firebase-auth', event => activateAccount(event.detail?.user || null));
-  window.addEventListener('ninq-firebase-error', event => { cloudIssue = event.detail?.message || 'ログインに失敗しました'; renderSaveStatus(); });
+  window.addEventListener('ninq-firebase-error', event => { cloudIssue = event.detail?.message || 'ログインに失敗しました'; renderSaveStatus(); if (!accountReady) showAccountStartupError(); });
   const user = window.NinqFirebaseCloud?.currentUser?.();
-  if (user) activateAccount(user);
+  if (window.NinqFirebaseCloud?.authResolved?.()) activateAccount(user);
 }
 function startCloudSyncHooks() {
   initFirebaseCloudHooks(); startFirebaseCloudPolling();
@@ -3492,6 +3495,7 @@ function startCloudSyncHooks() {
   window.addEventListener('offline', () => { renderSyncScreen(); renderSaveStatus(); });
 }
 function init() {
+  beginAccountStartup();
   initSafetyUi();
   bindEvents();
   renderAll();

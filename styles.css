@@ -457,3 +457,12 @@ body[data-font="thin"] #sc-cal .month-label{font-weight:700}
  #sc-st .company-rate-add #st-company-new,#sc-st .company-rate-add #st-company-sheet-new,#sc-st .company-rate-add #st-company-official-new,#sc-st .company-rate-add #st-company-honorific-new,#sc-st .company-rate-edit .company-rate-name-input,#sc-st .company-rate-edit .company-honorific-select{grid-column:span 2}
  #sc-st .company-rate-add .mini-add-btn{grid-column:1/-1}
 }
+
+body.account-loading{overflow:hidden}
+body.account-loading>:not(#account-startup):not(script){visibility:hidden!important;pointer-events:none!important}
+#account-startup{position:fixed;inset:0;z-index:9999;background:#eef3f8;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:18px;padding:28px;text-align:center}
+#account-startup[hidden]{display:none}
+#account-startup strong{font-size:32px;color:#1a4fa0}
+#account-startup h1{font-size:22px}
+#account-startup p{max-width:380px;font-size:15px;line-height:1.8;color:#5b6473}
+#account-startup button{padding:12px 24px;background:#1a4fa0;color:white;border:0;border-radius:10px}
