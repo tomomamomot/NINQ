@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.28-1';
+const APP_VERSION = 'v2026.09.29-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -144,7 +144,7 @@ function normalizeState(source) {
     if (dateTime(deletedReceiptIds[id]) < dateTime(removedAt)) deletedReceiptIds[id] = removedAt;
   });
   return { schemaVersion: 3, restoreGeneration: source.restoreGeneration || 'initial',
-    pendingRestore: source.pendingRestore || null, invoices: Array.isArray(source.invoices) ? clone(source.invoices) : [],
+    pendingRestore: source.pendingRestore || null, deletedInvoiceIds: {...(source.deletedInvoiceIds || {})}, invoices: Array.isArray(source.invoices) ? clone(source.invoices).filter(invoice => !source.deletedInvoiceIds?.[invoice.id]) : [],
     migrationIds: Array.isArray(source.migrationIds) ? [...source.migrationIds] : [],
     entries, receipts: [], deletedEntryIds, deletedReceiptIds, settings };
 }
@@ -1069,7 +1069,7 @@ function closeDayModal() {
 
 function expenseItemById(expenseId) {
   if (expenseId === DAY_MODAL_OVERTIME_ID) return { id: DAY_MODAL_OVERTIME_ID, label: '残業時間（h）', kind: 'overtime' };
-  return allExpenseItems().find((item) => item.id === expenseId) || { id: expenseId, label: `旧経費 (${expenseId})` };
+  return allExpenseItems().find((item) => item.id === expenseId) || { id: expenseId, label: '名称未設定の経費' };
 }
 
 function resetExpenseQuickPosition() {
@@ -1676,7 +1676,7 @@ function renderInvoiceScreen() {
   const entries = entriesForInvoiceCompany();
   const totals = invoiceTotals(entries);
   const invoiceFontSize = fontSizeLevel(state.settings.invoiceFontSize);
-  body.innerHTML = `<div class="invoice-tool-row"><strong>下書き</strong><button class="btn-primary" data-finalize-invoice>請求書を確定</button><span class="billing-period-label">${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</span><label>請求書フォント<select id="invoice-font-size-select">${fontSizeOptions(invoiceFontSize)}</select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
+  body.innerHTML = `<div class="invoice-tool-row"><strong>現在の予定から作成</strong><button class="btn-primary" data-finalize-invoice>請求書の控えを保存</button><span class="billing-period-label">${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</span><label>請求書フォント<select id="invoice-font-size-select">${fontSizeOptions(invoiceFontSize)}</select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
 }
 function syncStatusText() {
   const pending = loadSyncPending();
@@ -2124,6 +2124,7 @@ function localModifiedAt(targetState = state) {
     ...(targetState.entries || []).flatMap((entry) => [entry.updatedAt, entry.createdAt]),
     ...Object.values(targetState.deletedEntryIds || {}),
     ...Object.values(targetState.deletedReceiptIds || {}),
+    ...Object.values(targetState.deletedInvoiceIds || {}),
   ].filter(Boolean).map((value) => Date.parse(value)).filter(Number.isFinite);
   return dates.length ? new Date(Math.max(...dates)).toISOString() : new Date(0).toISOString();
 }
@@ -2307,15 +2308,7 @@ function mergeItemsWithDeletes(localItems = [], remoteItems = [], localDeleted =
 }
 function mergeDriveState(remotePayload, { preferRemoteSettings = false } = {}) {
   const remoteState = normalizeState(remotePayload.state || remotePayload);
-  const deletedEntryIds = mergeDeletedEntryIds(state.deletedEntryIds, remoteState.deletedEntryIds);
-  const deletedReceiptIds = mergeDeletedEntryIds(state.deletedReceiptIds, remoteState.deletedReceiptIds);
-  return normalizeState({
-    settings: mergeSettingsBySection(state.settings, remoteState.settings, { preferRemoteOnTie: preferRemoteSettings }),
-    entries: mergeEntriesWithDeletes(state.entries, remoteState.entries, state.deletedEntryIds, remoteState.deletedEntryIds),
-    receipts: [],
-    deletedEntryIds,
-    deletedReceiptIds,
-  });
+  return normalizeState(NinqData.mergeStates(state, remoteState, (a,b) => mergeSettingsBySection(a,b,{preferRemoteOnTie:preferRemoteSettings})));
 }
 function applyRemoteDriveState(remotePayload) {
   state = mergeDriveState(remotePayload);

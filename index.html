@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json?v=35">
 <link rel="icon" href="icon-192.png?v=34">
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=34">
-  <link rel="stylesheet" href="styles.css?v=99">
+  <link rel="stylesheet" href="styles.css?v=100">
 </head>
 <body class="account-loading">
 <section id="account-startup" role="status" aria-live="polite"><strong>NINQ</strong><h1>データを確認中</h1><p id="account-startup-message">ログイン状態を確認しています。</p><button id="account-startup-retry" type="button" hidden>再読み込み</button></section>
@@ -41,6 +41,7 @@
     <span class="month-label" id="cal-mnav"></span>
     <button id="next-month-btn" aria-label="次月">&#8250;</button>
   </div>
+  <div id="data-diagnostics" class="data-diagnostics"></div>
   <div id="home-storage-status" class="storage-banner" role="status" aria-live="polite"></div>
   <div id="update-notice" class="safety-panel" hidden></div>
   <aside id="onboarding" class="safety-panel" hidden></aside>
@@ -301,9 +302,9 @@
 </div>
 
   <section id="safety-sync" class="safety-panel hidden"></section>
-  <script src="data-core.js?v=3"></script>
-  <script src="app.js?v=160"></script>
-  <script src="safety-ui.js?v=5"></script>
+  <script src="data-core.js?v=4"></script>
+  <script src="app.js?v=161"></script>
+  <script src="safety-ui.js?v=6"></script>
   <script type="module" src="firebase-sync.js?v=6"></script>
   <script src="brand.js?v=35"></script>
   <script src="calendar-layout.js?v=28"></script>
@@ -311,5 +312,6 @@
   <script src="calendar-connections.js?v=51"></script>
   <script src="navigation-controls.js?v=42"></script>
   <script src="settings-polish.js?v=4"></script>
+<dialog id="invoice-delete-dialog" aria-labelledby="invoice-delete-title"><h2 id="invoice-delete-title">この控えを削除しますか？</h2><p id="invoice-delete-description"></p><p>カレンダーの予定は残ります。削除前の控えは復旧用コピーに残します。</p><div><button data-invoice-delete-cancel>キャンセル</button><button data-invoice-delete-confirm>この控えを削除する</button></div></dialog>
 </body>
 </html>

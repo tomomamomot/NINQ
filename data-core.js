@@ -21,14 +21,16 @@
   }
   function mergeStates(a, b, mergeSettings) {
     const deletedEntryIds = mergeMaps(a.deletedEntryIds, b.deletedEntryIds);
+    const deletedInvoiceIds = mergeMaps(a.deletedInvoiceIds, b.deletedInvoiceIds);
     const invoices = new Map();
     for (const invoice of [...(a.invoices || []), ...(b.invoices || [])]) {
+      if (deletedInvoiceIds[invoice.id]) continue;
       if (invoices.has(invoice.id) && canonical(invoices.get(invoice.id)) !== canonical(invoice)) throw new Error('同じ請求書IDの内容が異なります。復旧用データを書き出してください');
       invoices.set(invoice.id, copy(invoice));
     }
     return {...copy(b), ...copy(a), settings: mergeSettings(a.settings, b.settings),
       entries: mergeItems(a.entries, b.entries, deletedEntryIds), deletedEntryIds,
-      invoices: [...invoices.values()], migrationIds: [...new Set([...(a.migrationIds || []), ...(b.migrationIds || [])])],
+      invoices: [...invoices.values()], deletedInvoiceIds, migrationIds: [...new Set([...(a.migrationIds || []), ...(b.migrationIds || [])])],
       deletedReceiptIds: mergeMaps(a.deletedReceiptIds, b.deletedReceiptIds), receipts: []};
   }
   function validDate(value) {
@@ -36,7 +38,7 @@
     const date = new Date(value + 'T00:00:00Z');
     return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
   }
-  function entryValueIssues(entries, expenseItems = []) {
+  function entryValueIssues(entries, expenseItems = [], {allowNegative = false} = {}) {
     const labels = {qty:'人工',unitRate:'人工単価',otHours:'残業時間',otRate:'残業単価',contractAmount:'請負額',paymentAmount:'外注支払額'};
     const issues = [];
     for (const entry of entries) {
@@ -44,7 +46,7 @@
       const values = Object.entries(labels).filter(([key]) => entry[key] !== undefined).map(([key,label]) => [label,entry[key]]);
       for (const [id,value] of Object.entries(entry.expenses || {})) values.push([`経費「${expenseItems.find(item => item?.id === id)?.label || id}」`,value]);
       for (const [label,value] of values) {
-        if (typeof value === 'number' && Number.isFinite(value) && value >= 0) continue;
+        if (typeof value === 'number' && Number.isFinite(value) && (value >= 0 || allowNegative)) continue;
         const shown = JSON.stringify(value) ?? String(value);
         const reason = typeof value === 'number' && value < 0
           ? 'マイナス値です。0以上の値を確認してください（入力時の符号間違いの可能性があります）。'
@@ -58,7 +60,7 @@
     }
     return issues;
   }
-  function validateBackup(payload, {skipEntryValues = false} = {}) {
+  function validateBackup(payload, {skipEntryValues = false, allowNegative = false} = {}) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('バックアップ形式ではありません');
     if (payload.app && payload.app !== 'NINQ') throw new Error('NINQのバックアップを選んでください');
     if (payload.version !== undefined && ![1, 2, 3].includes(payload.version)) throw new Error('このバージョンのバックアップには未対応です');
@@ -83,16 +85,18 @@
       for (const key of ['company','site','workerName','notes']) if (entry[key] !== undefined && typeof entry[key] !== 'string') throw new Error('予定の文字項目の確認が必要です');
     }
     if (!skipEntryValues) {
-      const issues = entryValueIssues(state.entries, state.settings.expenseItems || []);
+      const issues = entryValueIssues(state.entries, state.settings.expenseItems || [], {allowNegative});
       if (issues.length) throw new Error(`予定の入力内容を確認してください（${issues.length}項目）\n${issues.slice(0, 10).join('\n')}${issues.length > 10 ? '\nほかの項目は修正後の再確認で表示します。' : ''}\n該当する予定を修正・削除してから再試行してください。端末に見当たらない場合は、別端末の予定や更新前のバックアップを確認してください。`);
     }
     if (state.schemaVersion !== undefined && state.schemaVersion !== 3) throw new Error('データ形式の更新が必要です');
     if (state.invoices !== undefined && !Array.isArray(state.invoices)) throw new Error('請求書の形式の確認が必要です');
+    if (state.deletedInvoiceIds !== undefined && (!state.deletedInvoiceIds || typeof state.deletedInvoiceIds !== 'object' || Array.isArray(state.deletedInvoiceIds) || Object.values(state.deletedInvoiceIds).some(value => typeof value !== 'string' || !Number.isFinite(Date.parse(value))))) throw new Error('控えの削除履歴を確認してください');
     const invoiceIds = new Set();
     for (const invoice of state.invoices || []) {
       if (!invoice.id || invoiceIds.has(invoice.id) || !invoice.snapshot || !invoice.totals || !validDate(invoice.period?.start) || !validDate(invoice.period?.end)) throw new Error('確定請求書の確認が必要です');
       invoiceIds.add(invoice.id);
-      validateBackup({entries:invoice.snapshot.entries, settings:invoice.snapshot.settings});
+      try { validateBackup({entries:invoice.snapshot.entries, settings:invoice.snapshot.settings}, {allowNegative:true}); }
+      catch (error) { throw new Error(`保存した請求書の控え：${invoice.company || ''} ${invoice.period.start}〜${invoice.period.end}（${invoice.issuedAt || '保存日時不明'}）\n${error.message}`); }
       for (const key of ['subtotal','tax','total','expenseTotal']) if (!Number.isFinite(invoice.totals[key])) throw new Error('請求金額の確認が必要です');
     }
     return copy(state);
@@ -101,7 +105,7 @@
     const columns = items.map(item => ({label:item.label, item, ids:[item.id]}));
     const known = new Set(items.map(item => item.id));
     for (const entry of entries) for (const id of Object.keys(entry.expenses || {})) {
-      if (!known.has(id)) { columns.push({label:`旧経費 (${id})`,item:{id,label:`旧経費 (${id})`,archived:true},ids:[id]}); known.add(id); }
+      if (!known.has(id) && entry.expenses[id] !== 0) { columns.push({label:'名称未設定の経費',item:{id,label:'名称未設定の経費',archived:true},ids:[id]}); known.add(id); }
     }
     return columns;
   }
@@ -110,6 +114,13 @@
     while (result.length < 6) result.push({label:'',item:{id:`__blank${result.length}`},ids:[]});
     return result;
   }
-  root.NinqData = {copy, mergeItems, mergeMaps, mergeStates, validDate, validateBackup, expenseColumns, paperColumns};
+  function diagnostics(state) {
+    const result = [];
+    for (const entry of state.entries || []) for (const message of entryValueIssues([entry], state.settings?.expenseItems || [])) result.push({kind:'entry',id:entry.id,message});
+    for (const invoice of state.invoices || []) for (const message of entryValueIssues(invoice.snapshot?.entries || [], invoice.snapshot?.settings?.expenseItems || [])) result.push({kind:'invoice',id:invoice.id,message:`${invoice.company} ／ ${invoice.period.start}〜${invoice.period.end} ／ 保存 ${invoice.issuedAt ? new Date(invoice.issuedAt).toLocaleString('ja-JP') : '日時不明'}\n${message}\n保存当時の内容です。現在の予定の修正では変わりません。必要に応じて訂正版を作成するか、不要な控えを削除してください。`});
+    return result;
+  }
+  function invoiceContentKey(invoice) { return canonical({company:invoice.company,period:invoice.period,snapshot:invoice.snapshot,totals:invoice.totals,revises:invoice.revises || ''}); }
+  root.NinqData = {copy, mergeItems, mergeMaps, mergeStates, validDate, validateBackup, expenseColumns, paperColumns, diagnostics, invoiceContentKey};
   if (typeof module !== 'undefined') module.exports = root.NinqData;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

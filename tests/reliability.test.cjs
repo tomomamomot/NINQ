@@ -118,7 +118,7 @@ test('new expense editor creates stable IDs without altering existing IDs',()=>{
  const {run,nodes}=app();run('renderExpenseEditor()');run(`document.getElementById('st-expense-new').value='Rental';addExpenseItem();`);assert.equal(run('state.settings.expenseItems.length'),7);assert.equal(run('state.settings.expenseItems[0].id'),'exp1');assert.notEqual(run('state.settings.expenseItems[6].id'),'exp7');
 });
 test('CSV exports preserve issued amounts and unknown expense columns',()=>{
- const {run}=app();run(`state.entries[0].expenses={unknown:1000};finalizeInvoice();state.settings.taxRate=8;downloadCsv=(name,rows)=>{window.csv=rows};exportInvoiceCsv();`);assert.equal(run(`window.csv.find(row=>row[0]==='合計')[1]`),23000);run('exportDemenCsv()');assert.equal(run(`window.csv[0].includes('旧経費 (unknown)')`),true);assert.equal(run('window.csv[1].at(-1)'),21000);
+ const {run}=app();run(`state.entries[0].expenses={unknown:1000};finalizeInvoice();state.settings.taxRate=8;downloadCsv=(name,rows)=>{window.csv=rows};exportInvoiceCsv();`);assert.equal(run(`window.csv.find(row=>row[0]==='合計')[1]`),23000);run('exportDemenCsv()');assert.equal(run(`window.csv[0].includes('名称未設定の経費')`),true);assert.equal(run('window.csv[1].at(-1)'),21000);
 });
 test('reusable previous entry clears variable charges and keeps the chosen date',()=>{
  const {run}=app();run(`document.getElementById('f-date').value='2026-10-01';document.getElementById('f-ot-hours').value='2';document.getElementById('f-notes').value='old';reusePreviousEntry();`);assert.equal(run(`document.getElementById('f-date').value`),'2026-10-01');assert.equal(run(`document.getElementById('f-ot-hours').value`),'');assert.equal(run(`document.getElementById('f-notes').value`),'');assert.equal(run(`document.getElementById('f-rate').value`),20000);
@@ -184,4 +184,56 @@ test('unknown identity and startup timeout never reveal or overwrite guest data'
  assert.equal(a.run('accountReady'),false);assert.equal(a.run('state.entries.length'),0);assert.equal(a.memory.size,0);assert.equal(a.nodes.get('account-startup-retry').hidden,false);
  assert.match(a.nodes.get('account-startup-message').textContent,/再読み込み/);
  a.run(`accountReady=true;document.getElementById('account-startup-message').textContent='unchanged';showAccountStartupError();`);assert.equal(a.nodes.get('account-startup-message').textContent,'unchanged');
+});
+
+test('zero unknown expenses disappear but individual nonzero amounts never cancel out of columns',()=>{
+ assert.equal(data.expenseColumns([],[entry('a',{expenses:{overtime:0}})]).length,0);
+ const cols=data.expenseColumns([],[entry('a',{expenses:{unknown:100}}),entry('b',{expenses:{unknown:-100}})]);
+ assert.equal(cols.length,1);assert.equal(cols[0].item.id,'unknown');assert.equal(cols[0].label,'名称未設定の経費');
+ const {run}=app();run(`state.entries[0].expenses={old:1200,overtime:0};`);assert.equal(run(`nameUnknownExpense('old','駐車場')`),true);
+ assert.equal(run('state.entries[0].expenses.old'),1200);assert.equal(run(`state.settings.expenseItems.find(x=>x.id==='old').label`),'駐車場');
+});
+test('negative archived value is a contextual warning, new invalid copies are blocked',()=>{
+ const {run}=app();run(`finalizeInvoice();state.invoices[0].snapshot.entries[0].otRate=-3;`);
+ const saved=JSON.parse(run('JSON.stringify(state)'));assert.doesNotThrow(()=>data.validateBackup(saved));
+ const issues=data.diagnostics(saved);assert.equal(issues.length,1);assert.equal(issues[0].kind,'invoice');assert.equal(issues[0].id,saved.invoices[0].id);
+ assert.match(issues[0].message,/保存/);assert.equal(saved.invoices[0].snapshot.entries[0].otRate,-3);
+ saved.invoices[0].snapshot.entries[0].otRate='bad';assert.throws(()=>data.validateBackup(saved),/保存した請求書の控え/);
+ run(`state.entries[0].otRate=-3;selectedInvoiceId='';finalizeInvoice();`);assert.equal(run('state.invoices.length'),1);
+});
+test('archived negative values no longer block cloud synchronization',async()=>{
+ const {run}=app();run(`finalizeInvoice();state.invoices[0].snapshot.entries[0].otRate=-3;`);
+ const s=JSON.parse(run('JSON.stringify(state)')),c=cloud({payload:{version:3,state:s}});
+ await c.write({version:3,state:{...s,entries:[entry('a',{otRate:0,updatedAt:'2026-09-29T00:00:00Z'})]}});
+ assert.equal(c.get().payload.state.entries[0].otRate,0);assert.equal(c.get().payload.state.invoices[0].snapshot.entries[0].otRate,-3);
+});
+test('duplicate clicks reuse the saved copy, changed revision stays distinct',()=>{
+ const {run}=app();run(`finalizeInvoice();selectedInvoiceId='';finalizeInvoice();`);assert.equal(run('state.invoices.length'),1);
+ run(`state.entries[0].qty=2;finalizeInvoice();`);assert.equal(run('state.invoices.length'),2);
+});
+test('copy deletion cancellation, recovery failure and write failure preserve copies and entries',()=>{
+ const {run,memory}=app();run(`finalizeInvoice();window.id=state.invoices[0].id;confirm=()=>false;`);assert.equal(run('deleteInvoice(window.id)'),false);
+ run(`confirm=()=>true;window.originalSet=localStorage.setItem;localStorage.setItem=()=>{throw Error('quota')};`);assert.equal(run('deleteInvoice(window.id)'),false);assert.equal(run('state.invoices.length'),1);
+ run(`localStorage.setItem=(k,v)=>{if(k.startsWith('ninq-v2'))throw Error('quota');window.originalSet(k,v)};`);assert.equal(run('deleteInvoice(window.id)'),false);assert.equal(run('state.invoices.length'),1);
+ run(`localStorage.setItem=window.originalSet;`);assert.equal(run('deleteInvoice(window.id)'),true);assert.equal(run('state.invoices.length'),0);assert.equal(run('state.entries.length'),1);assert.ok(run('state.deletedInvoiceIds[window.id]'));assert.ok([...memory.keys()].some(k=>k.startsWith('ninq-recovery-')));
+});
+test('deleted copies stay deleted across concurrent cloud writers and normal backup add',async()=>{
+ const {run}=app();run(`finalizeInvoice();window.before=clone(state);window.id=state.invoices[0].id;deleteInvoice(window.id);`);
+ const before=JSON.parse(run('JSON.stringify(window.before)')),after=JSON.parse(run('JSON.stringify(state)')),c=cloud({payload:{version:3,state:before}});
+ await Promise.all([c.write({version:3,state:after}),c.write({version:3,state:before})]);assert.equal(c.get().payload.state.invoices.length,0);assert.ok(c.get().payload.state.deletedInvoiceIds[before.invoices[0].id]);
+ run(`pendingBackup=window.before;pendingBackupOwner=activeOwner;commitBackup('add');`);assert.equal(run('state.invoices.length'),0);
+ run(`pendingBackup=window.before;pendingBackupOwner=activeOwner;commitBackup('replace');`);assert.equal(run('state.invoices.length'),1);assert.equal(run('state.deletedInvoiceIds[window.id]'),undefined);
+ assert.equal(data.validateBackup(JSON.parse(run('JSON.stringify(state)'))).invoices.length,1);
+});
+test('deleting original leaves revision and replacement restores delete absent copies',()=>{
+ const {run}=app();run(`finalizeInvoice();window.id=state.invoices[0].id;invoiceRevisionDraft={...clone(state.invoices[0]),revises:window.id};invoiceRevisionDraft.totals.total=24000;finalizeInvoice();deleteInvoice(window.id);`);
+ assert.equal(run('state.invoices.length'),1);assert.equal(run('state.invoices[0].revises'),run('window.id'));
+ run(`selectedInvoiceId=state.invoices[0].id;renderInvoiceArchive();`);assert.match(run(`document.getElementById('inv-body').innerHTML`),/元の控えは削除/);
+ run(`window.revision=state.invoices[0].id;pendingBackup=normalizeState({entries:[],settings:{}});pendingBackupOwner=activeOwner;commitBackup('replace');`);assert.ok(run('state.deletedInvoiceIds[window.revision]'));
+});
+test('local diagnostics clear after correction without claiming a successful sync',()=>{
+ const a=app();vm.runInContext(fs.readFileSync('safety-ui.js','utf8').match(/function renderSaveStatus\(\) \{[\s\S]*?\n\}/)[0],a.context);
+ a.run(`state.entries[0].otRate=-3;cloudIssue='古い入力エラー';cloudIssueWasLocal=true;saveSyncPending(true,'retry');renderSaveStatus();`);
+ assert.match(a.nodes.get('data-diagnostics').innerHTML,/予定を開く/);
+ a.run(`state.entries[0].otRate=0;renderSaveStatus();`);assert.equal(a.nodes.get('data-diagnostics').innerHTML,'');assert.match(a.nodes.get('home-storage-status').textContent,/未送信/);
 });

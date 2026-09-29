@@ -14,6 +14,9 @@ function finishAccountStartup() {
   document.getElementById('account-startup').hidden = true;
 }
 // Account lifecycle, recovery and issued documents. Loaded after app.js, before DOMContentLoaded.
+let cloudIssueWasLocal = false;
+let savingInvoice = false;
+let pendingInvoiceDeletion = null;
 function mergeSafeStates(a, b) {
   return NinqData.mergeStates(normalizeState(a), normalizeState(b), mergeSettingsBySection);
 }
@@ -26,11 +29,13 @@ function activateAccount(user) {
     catch (error) { downloadText('ninq-unsaved.json', JSON.stringify({app:'NINQ',version:3,state}), 'application/json'); }
   }
   accountEpoch++;
+  pendingInvoiceDeletion = null;
+  document.getElementById('invoice-delete-dialog')?.close?.();
   for (const timer of [firebaseSyncTimer, driveSyncTimer, settingsAutosaveTimer]) window.clearTimeout(timer);
   settingsAutosaveTimer = null; settingsAutosaveSections.clear();
   firebaseSyncInFlight = false; firebaseSyncQueued = false; driveSyncInFlight = false; driveSyncQueued = false;
   googleAccessTokens.clear();
-  firebaseUser = user; activeOwner = owner; accountReady = true; storageFailure = ''; cloudIssue = '';
+  firebaseUser = user; activeOwner = owner; accountReady = true; storageFailure = ''; cloudIssue = ''; cloudIssueWasLocal = false;
   state = loadState(); localRevision = 0;
   selectedInvoiceId = ''; invoiceRevisionDraft = null; pendingBackup = null;
   document.getElementById('backup-preview')?.remove();
@@ -54,7 +59,7 @@ async function safeSyncCloud({auto = false, reason = ''} = {}) {
   const uid = firebaseUser.uid, epoch = accountEpoch, revision = localRevision;
   const submitted = clone(normalizeState(state));
   const expectedGeneration = submitted.pendingRestore?.base || submitted.restoreGeneration;
-  firebaseSyncInFlight = true; cloudIssue = ''; renderSaveStatus();
+  firebaseSyncInFlight = true; cloudIssue = ''; cloudIssueWasLocal = false; renderSaveStatus();
   try {
     const payload = {...firebaseSyncPayload(), state:submitted};
     const result = await window.NinqFirebaseCloud.syncState(payload, {uid, expectedGeneration, merge:mergeSafeStates});
@@ -81,6 +86,8 @@ async function safeSyncCloud({auto = false, reason = ''} = {}) {
   } catch (error) {
     if (!accountMatches(uid, epoch)) return;
     cloudIssue = error.message || '同期に失敗しました';
+    cloudIssueWasLocal = NinqData.diagnostics(submitted).some(item => item.kind === 'entry');
+    if (revision !== localRevision) firebaseSyncQueued = true;
     saveSyncPending(true, 'retry'); setSyncLog(cloudIssue);
   } finally {
     if (accountMatches(uid, epoch)) {
@@ -130,7 +137,7 @@ function commitBackup(mode) {
     saveRecovery('バックアップ読み込み前');
     let next;
     if (mode === 'add') {
-      next = mergeSafeStates(state, {...pendingBackup, deletedEntryIds:{},deletedReceiptIds:{}});
+      next = mergeSafeStates(state, {...pendingBackup, deletedEntryIds:{},deletedReceiptIds:{},deletedInvoiceIds:{}});
       next.restoreGeneration = state.restoreGeneration || 'initial'; next.pendingRestore = state.pendingRestore;
     } else {
       next = clone(pendingBackup);
@@ -140,6 +147,10 @@ function commitBackup(mode) {
       next.deletedEntryIds = {...state.deletedEntryIds, ...next.deletedEntryIds};
       for (const entry of state.entries) if (!kept.has(entry.id)) next.deletedEntryIds[entry.id] = new Date().toISOString();
       for (const entry of next.entries) delete next.deletedEntryIds[entry.id];
+      const keptInvoices = new Set(next.invoices.map(invoice => invoice.id));
+      next.deletedInvoiceIds = {...state.deletedInvoiceIds, ...next.deletedInvoiceIds};
+      for (const invoice of state.invoices) if (!keptInvoices.has(invoice.id)) next.deletedInvoiceIds[invoice.id] = new Date().toISOString();
+      for (const invoice of next.invoices) delete next.deletedInvoiceIds[invoice.id];
     }
     if (!saveState(next)) return false;
     state = next; pendingBackup = null; selectedInvoiceId = ''; invoiceRevisionDraft = null;
@@ -151,12 +162,20 @@ function renderSaveStatus() {
   const host = document.getElementById('home-storage-status'); if (!host) return;
   let label = '端末保存済み';
   const meta = loadSyncMeta(), pending = loadSyncPending();
+  const issues = NinqData.diagnostics(state);
+  if (cloudIssueWasLocal && !issues.some(item => item.kind === 'entry')) { cloudIssue = ''; cloudIssueWasLocal = false; }
+  const diagnosticsHost = document.getElementById('data-diagnostics');
+  if (diagnosticsHost) diagnosticsHost.innerHTML = diagnosticHtml(issues);
   if (storageFailure) label = storageFailure;
   else if (cloudIssue) label = `要対応：${cloudIssue}`;
   else if (firebaseSyncInFlight) label = '同期中';
   else if (pending.pending) label = navigator.onLine ? '未送信' : '未送信（オフライン）';
   else if (firebaseUser && meta.lastSyncedAt) label = '同期済み';
   host.textContent = label + (meta.lastSyncedAt ? ` ／ 最終同期 ${new Date(meta.lastSyncedAt).toLocaleString('ja-JP')}` : '');
+}
+function diagnosticHtml(issues) {
+  if (!issues.length) return '';
+  return `<details class="safety-panel" open><summary>確認が必要なデータ（${issues.length}項目）</summary>` + issues.slice(0,10).map(issue => `<div class="diagnostic-item"><strong>${issue.kind === 'invoice' ? '保存した控えの注意（現在の予定とは別）' : '現在の予定'}</strong><p>${escapeHtml(issue.message)}</p><button ${issue.kind === 'invoice' ? 'data-diagnostic-invoice' : 'data-diagnostic-entry'}="${escapeHtml(issue.id)}">${issue.kind === 'invoice' ? '控えを確認' : '予定を開く'}</button></div>`).join('') + (issues.length > 10 ? '<p>ほかの項目は修正後に表示します。</p>' : '') + '</details>';
 }
 function installUpdateFlow() {
   if (!('serviceWorker' in navigator)) return;
@@ -210,6 +229,15 @@ function renderSafetySync() {
 function renderExpenseEditor() {
   const host = document.getElementById('st-expense-list'); if (!host) return;
   host.innerHTML = allExpenseItems().map(item => `<div class="expense-editor-row"><input aria-label="経費名" data-expense-label="${escapeHtml(item.id)}" value="${escapeHtml(item.label)}"><button data-expense-move="${escapeHtml(item.id)}" data-direction="-1" aria-label="上へ">↑</button><button data-expense-move="${escapeHtml(item.id)}" data-direction="1" aria-label="下へ">↓</button><button data-expense-archive="${escapeHtml(item.id)}">${item.archived ? '再開' : '廃止'}</button></div>`).join('');
+  const unknown = NinqData.expenseColumns(allExpenseItems(), state.entries).filter(col => !allExpenseItems().some(item => item.id === col.item.id));
+  host.innerHTML += unknown.map(col => `<section class="unknown-expense"><h3>名称未設定の経費</h3><p>元の項目ID：${escapeHtml(col.item.id)}</p>${state.entries.filter(entry => Object.hasOwn(entry.expenses || {},col.item.id) && entry.expenses[col.item.id] !== 0).map(entry => `<p>${escapeHtml(entry.date)} ／ ${escapeHtml(entry.company)} ／ ${escapeHtml(entry.site)}：${escapeHtml(entry.expenses[col.item.id])}円</p>`).join('')}<label>経費名<input data-unknown-expense="${escapeHtml(col.item.id)}" placeholder="例：交通費"></label><button data-name-expense="${escapeHtml(col.item.id)}">名称を設定</button></section>`).join('');
+}
+function nameUnknownExpense(id, label) {
+  if (!label?.trim() || allExpenseItems().some(item => item.id === id)) return false;
+  const next = clone(state); next.settings.expenseItems.push({id,label:label.trim(),archived:true});
+  next.settings.settingUpdatedAt.expenses = new Date().toISOString(); next.settings.updatedAt = next.settings.settingUpdatedAt.expenses;
+  if (!saveState(next)) return false;
+  state = next; renderAll(); scheduleFirebaseAutoSync({reason:'save'}); return true;
 }
 function addExpenseItem() {
   const input = document.getElementById('st-expense-new');
@@ -218,17 +246,43 @@ function addExpenseItem() {
   input.value = ''; markSettingsSections('expenses'); saveState(); renderExpenseEditor(); scheduleFirebaseAutoSync({reason:'save'});
 }
 function finalizeInvoice() {
+  if (savingInvoice) return;
+  savingInvoice = true;
+  try {
   const draft = invoiceRevisionDraft;
   const entries = draft ? draft.snapshot.entries : entriesForInvoiceCompany();
   if (!entries.length) return;
+  NinqData.validateBackup({entries,settings:draft?.snapshot.settings || state.settings});
   const invoice = {id:crypto.randomUUID(), issuedAt:new Date().toISOString(), company:draft?.company || selectedCompany,
     period:clone(draft?.period || companyBillingRange(selectedCompany)), cursor:toYmd(cursor),
     revises:draft?.revises || '', snapshot:clone(draft?.snapshot || {entries,settings:state.settings}),
     totals:clone(draft?.totals || invoiceTotals(entries))};
+  NinqData.validateBackup({entries:[],settings:{},invoices:[invoice]});
+  const existing = state.invoices.find(item => NinqData.invoiceContentKey(item) === NinqData.invoiceContentKey(invoice));
+  if (existing) { selectedInvoiceId = existing.id; invoiceRevisionDraft = null; renderAll(); return; }
   const next = {...state, invoices:[...(state.invoices || []),invoice]};
   if (!saveState(next)) return;
   state = next; invoiceRevisionDraft = null; selectedInvoiceId = invoice.id;
   renderAll(); scheduleFirebaseAutoSync({reason:'save'});
+  } catch (error) { alert(`控えを保存できませんでした。\n${error.message}`); renderSaveStatus(); }
+  finally { savingInvoice = false; }
+}
+function requestInvoiceDeletion(id) {
+  const invoice = state.invoices.find(item => item.id === id); if (!invoice) return;
+  pendingInvoiceDeletion = {id,owner:activeOwner,epoch:accountEpoch};
+  document.getElementById('invoice-delete-description').textContent = `${invoice.company}\n${invoice.period.start}〜${invoice.period.end}\n保存：${new Date(invoice.issuedAt).toLocaleString('ja-JP')}\n合計：${yen(invoice.totals.total)}`;
+  document.getElementById('invoice-delete-dialog').showModal();
+}
+function deleteInvoice(id, {confirmed = false} = {}) {
+  const invoice = state.invoices.find(item => item.id === id); if (!invoice) return false;
+  if (!confirmed && !confirm(`この控えを削除しますか？\n${invoice.company}\n${invoice.period.start}〜${invoice.period.end}\n保存：${new Date(invoice.issuedAt).toLocaleString('ja-JP')}\n合計：${yen(invoice.totals.total)}\nカレンダーの予定は残ります。`)) return false;
+  try {
+    saveRecovery('請求書の控えの削除前');
+    const next = {...state,invoices:state.invoices.filter(item => item.id !== id),deletedInvoiceIds:{...state.deletedInvoiceIds,[id]:new Date().toISOString()}};
+    if (!saveState(next)) return false;
+    state = next; if (selectedInvoiceId === id) { selectedInvoiceId = ''; invoiceRevisionDraft = null; }
+    renderAll(); scheduleFirebaseAutoSync({reason:'save'}); return true;
+  } catch(error) { alert(`控えの削除を中止しました。${error.message}`); return false; }
 }
 function withInvoice(invoice, callback) {
   const previous = {state,selectedCompany,cursor,invoiceRenderContext};
@@ -239,14 +293,14 @@ function withInvoice(invoice, callback) {
 }
 function renderInvoiceArchive() {
   const host = document.getElementById('invoice-history');
-  if (host) host.innerHTML = `<summary>確定済み請求書（${(state.invoices || []).length}件）</summary><button data-invoice-current>現在の下書き</button>` + [...(state.invoices || [])].sort((a,b) => b.issuedAt.localeCompare(a.issuedAt)).map(invoice => `<button data-invoice-open="${escapeHtml(invoice.id)}">${escapeHtml(invoice.period.start)}〜${escapeHtml(invoice.period.end)} ${escapeHtml(invoice.company)}${invoice.revises ? '（訂正版）' : ''}</button>`).join('');
+  if (host) host.innerHTML = `<summary>保存した請求書の控え（${(state.invoices || []).length}件）</summary><button data-invoice-current>現在の予定から作成</button>` + [...(state.invoices || [])].sort((a,b) => b.issuedAt.localeCompare(a.issuedAt)).map(invoice => `<button data-invoice-open="${escapeHtml(invoice.id)}">${escapeHtml(invoice.period.start)}〜${escapeHtml(invoice.period.end)} ${escapeHtml(invoice.company)}${invoice.revises ? '（訂正版）' : ''}<small>保存 ${escapeHtml(new Date(invoice.issuedAt).toLocaleString('ja-JP'))} ／ 合計 ${escapeHtml(yen(invoice.totals.total))}</small></button>`).join('');
   const invoice = selectedInvoiceId ? (state.invoices || []).find(item => item.id === selectedInvoiceId) : invoiceRevisionDraft;
   if (!invoice) return false;
   const body = document.getElementById('inv-body');
   const hidden = !state.settings.showSales;
   document.getElementById('co-tabs').innerHTML = '';
   const sheets = withInvoice(invoice, () => buildInvoiceSheet(state.entries, invoice.totals, hidden) + buildDemenSheet(state.entries, invoice.totals, hidden));
-  body.innerHTML = `<div class="invoice-actions safety-panel"><strong>${selectedInvoiceId ? '確定済み' : '訂正版の下書き'}</strong><p>${invoice.issuedAt ? `確定日時：${escapeHtml(new Date(invoice.issuedAt).toLocaleString('ja-JP'))}` : '現在の予定や設定を変更後、「現在の予定・設定で訂正」を押してください。'}</p>${selectedInvoiceId ? '<button data-invoice-revise>訂正版を作成</button>' : '<button data-finalize-invoice>請求書を確定</button><button data-revision-refresh>現在の予定・設定で訂正</button>'}<button data-invoice-current>現在の下書きへ</button><button data-print-invoice>請求書印刷</button><button data-print-demen>出面表印刷</button><button data-export-invoice>請求CSV</button><button data-export-demen>出面CSV</button></div>${sheets}`;
+  body.innerHTML = `<div class="invoice-actions safety-panel"><strong>${selectedInvoiceId ? '保存した控え' : '訂正版を作成中'}</strong><p>${invoice.issuedAt ? `保存日時：${escapeHtml(new Date(invoice.issuedAt).toLocaleString('ja-JP'))}` : '現在の予定や設定を変更後、「現在の予定・設定で訂正」を押してください。'}</p>${selectedInvoiceId ? '<button data-invoice-revise>訂正版を作成</button><button data-invoice-delete>この控えを削除</button>' : '<button data-finalize-invoice>請求書の控えを保存</button><button data-revision-refresh>現在の予定・設定で訂正</button>'}<button data-invoice-current>現在の予定から作成へ</button><button data-print-invoice>請求書印刷</button><button data-print-demen>出面表印刷</button><button data-export-invoice>請求CSV</button><button data-export-demen>出面CSV</button></div>${invoice.revises && state.deletedInvoiceIds?.[invoice.revises] ? '<p class="safety-panel">元の控えは削除されています。この訂正版は残っています。</p>' : ''}${diagnosticHtml(NinqData.diagnostics({entries:[],invoices:[invoice]}))}${sheets}`;
   return true;
 }
 function renderOnboarding() {
@@ -286,6 +340,17 @@ function initSafetyUi() {
     if (data.recoveryExport) { downloadText('ninq-recovery.json',localStorage.getItem(data.recoveryExport),'application/json'); return; }
     if (data.backupMode) return commitBackup(data.backupMode);
     if ('backupCancel' in data) { pendingBackup = null; document.getElementById('backup-preview')?.remove(); return; }
+    if (data.diagnosticEntry) { const entry = state.entries.find(item => item.id === data.diagnosticEntry); if (entry) { activeScreen = 'cal'; selectedDate = entry.date; cursor = startOfMonth(fromYmd(entry.date)); renderAll(); openModal(entry.type,entry.id); } return; }
+    if (data.diagnosticInvoice) { activeScreen = 'inv'; selectedInvoiceId = data.diagnosticInvoice; invoiceRevisionDraft = null; renderAll(); return; }
+    if ('invoiceDelete' in data) return requestInvoiceDeletion(selectedInvoiceId);
+    if ('invoiceDeleteCancel' in data) { pendingInvoiceDeletion = null; document.getElementById('invoice-delete-dialog').close(); return; }
+    if ('invoiceDeleteConfirm' in data) {
+      const pending = pendingInvoiceDeletion; pendingInvoiceDeletion = null;
+      document.getElementById('invoice-delete-dialog').close();
+      if (pending && pending.owner === activeOwner && pending.epoch === accountEpoch) return deleteInvoice(pending.id,{confirmed:true});
+      return;
+    }
+    if (data.nameExpense) { const input = [...document.querySelectorAll('[data-unknown-expense]')].find(item => item.dataset.unknownExpense === data.nameExpense); return nameUnknownExpense(data.nameExpense,input?.value); }
     if ('finalizeInvoice' in data) return finalizeInvoice();
     if (data.invoiceOpen) { selectedInvoiceId = data.invoiceOpen; invoiceRevisionDraft = null; renderInvoiceScreen(); return; }
     if ('invoiceCurrent' in data) { selectedInvoiceId = ''; invoiceRevisionDraft = null; renderInvoiceScreen(); return; }
