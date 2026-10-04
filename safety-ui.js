@@ -29,6 +29,7 @@ function activateAccount(user) {
     catch (error) { downloadText('ninq-unsaved.json', JSON.stringify({app:'NINQ',version:3,state}), 'application/json'); }
   }
   accountEpoch++;
+  invoiceDraftDates.clear();
   pendingInvoiceDeletion = null;
   document.getElementById('invoice-delete-dialog')?.close?.();
   for (const timer of [firebaseSyncTimer, driveSyncTimer, settingsAutosaveTimer]) window.clearTimeout(timer);
@@ -254,7 +255,7 @@ function finalizeInvoice() {
   if (!entries.length) return;
   NinqData.validateBackup({entries,settings:draft?.snapshot.settings || state.settings});
   const invoice = {id:crypto.randomUUID(), issuedAt:new Date().toISOString(), company:draft?.company || selectedCompany,
-    period:clone(draft?.period || companyBillingRange(selectedCompany)), cursor:toYmd(cursor),
+    invoiceDate:invoiceDateValue(draft), period:clone(draft?.period || companyBillingRange(selectedCompany)), cursor:toYmd(cursor),
     revises:draft?.revises || '', snapshot:clone(draft?.snapshot || {entries,settings:state.settings}),
     totals:clone(draft?.totals || invoiceTotals(entries))};
   NinqData.validateBackup({entries:[],settings:{},invoices:[invoice]});
@@ -300,7 +301,7 @@ function renderInvoiceArchive() {
   const hidden = !state.settings.showSales;
   document.getElementById('co-tabs').innerHTML = '';
   const sheets = withInvoice(invoice, () => buildInvoiceSheet(state.entries, invoice.totals, hidden) + buildDemenSheet(state.entries, invoice.totals, hidden));
-  body.innerHTML = `<div class="invoice-actions safety-panel"><strong>${selectedInvoiceId ? '保存した控え' : '訂正版を作成中'}</strong><p>${invoice.issuedAt ? `保存日時：${escapeHtml(new Date(invoice.issuedAt).toLocaleString('ja-JP'))}` : '現在の予定や設定を変更後、「現在の予定・設定で訂正」を押してください。'}</p>${selectedInvoiceId ? '<button data-invoice-revise>訂正版を作成</button><button data-invoice-delete>この控えを削除</button>' : '<button data-finalize-invoice>請求書の控えを保存</button><button data-revision-refresh>現在の予定・設定で訂正</button>'}<button data-invoice-current>現在の予定から作成へ</button><button data-print-invoice>請求書印刷</button><button data-print-demen>出面表印刷</button><button data-export-invoice>請求CSV</button><button data-export-demen>出面CSV</button></div>${invoice.revises && state.deletedInvoiceIds?.[invoice.revises] ? '<p class="safety-panel">元の控えは削除されています。この訂正版は残っています。</p>' : ''}${diagnosticHtml(NinqData.diagnostics({entries:[],invoices:[invoice]}))}${sheets}`;
+  body.innerHTML = `<div class="invoice-actions safety-panel"><strong>${selectedInvoiceId ? '保存した控え' : '訂正版を作成中'}</strong>${invoiceDateControl(invoice,!!selectedInvoiceId)}<p>${invoice.issuedAt ? `保存日時：${escapeHtml(new Date(invoice.issuedAt).toLocaleString('ja-JP'))}` : '現在の予定や設定を変更後、「現在の予定・設定で訂正」を押してください。'}</p>${selectedInvoiceId ? '<button data-invoice-revise>訂正版を作成</button><button data-invoice-delete>この控えを削除</button>' : '<button data-finalize-invoice>請求書の控えを保存</button><button data-revision-refresh>現在の予定・設定で訂正</button>'}<button data-invoice-current>現在の予定から作成へ</button><button data-print-invoice>請求書印刷</button><button data-print-demen>出面表印刷</button><button data-export-invoice>請求CSV</button><button data-export-demen>出面CSV</button></div>${invoice.revises && state.deletedInvoiceIds?.[invoice.revises] ? '<p class="safety-panel">元の控えは削除されています。この訂正版は残っています。</p>' : ''}${diagnosticHtml(NinqData.diagnostics({entries:[],invoices:[invoice]}))}${sheets}`;
   return true;
 }
 function renderOnboarding() {
@@ -322,6 +323,7 @@ function initSafetyUi() {
   const syncPanel = document.getElementById('safety-sync');
   document.getElementById('sc-sync').appendChild(syncPanel); syncPanel.classList.remove('hidden');
   document.addEventListener('change', event => {
+    if (event.target.matches('[data-invoice-date]')) { if (!setInvoiceDate(event.target.value)) { alert('請求書の日付を入力してください。'); renderInvoiceScreen(); } return; }
     const id = event.target.dataset.expenseLabel;
     if (!id) return;
     const item = state.settings.expenseItems.find(item => item.id === id);
@@ -356,7 +358,7 @@ function initSafetyUi() {
     if ('invoiceCurrent' in data) { selectedInvoiceId = ''; invoiceRevisionDraft = null; renderInvoiceScreen(); return; }
     if ('invoiceRevise' in data) {
       const invoice = state.invoices.find(item => item.id === selectedInvoiceId);
-      invoiceRevisionDraft = {...clone(invoice),id:'',issuedAt:'',revises:invoice.id}; selectedInvoiceId = ''; renderInvoiceScreen(); return;
+      invoiceRevisionDraft = {...clone(invoice),invoiceDate:invoiceDateValue(invoice),id:'',issuedAt:'',revises:invoice.id}; selectedInvoiceId = ''; renderInvoiceScreen(); return;
     }
     if ('revisionRefresh' in data && invoiceRevisionDraft) {
       const draft = invoiceRevisionDraft;

@@ -12,7 +12,7 @@ function app(initial=[]){
   vm.runInContext('renderAll=()=>{};renderSyncScreen=()=>{};renderSaveStatus=()=>{};showSaveFeedback=()=>{};',context);
   const run=code=>vm.runInContext(code,context);
   const startupCount=run('state.entries.length');
-  run(`accountReady=true;state=normalizeState({entries:[${JSON.stringify(entry('a'))}],settings:{}});selectedCompany='Test';`);
+  run(`accountReady=true;state=normalizeState({entries:[${JSON.stringify(entry('a'))}],settings:{}});selectedCompany='Test';cursor=fromYmd('2026-09-01');`);
   return {run,memory,context,nodes,startupCount};
 }
 test('invalid JSON and versions leave data untouched',()=>{
@@ -236,4 +236,35 @@ test('local diagnostics clear after correction without claiming a successful syn
  a.run(`state.entries[0].otRate=-3;cloudIssue='古い入力エラー';cloudIssueWasLocal=true;saveSyncPending(true,'retry');renderSaveStatus();`);
  assert.match(a.nodes.get('data-diagnostics').innerHTML,/予定を開く/);
  a.run(`state.entries[0].otRate=0;renderSaveStatus();`);assert.equal(a.nodes.get('data-diagnostics').innerHTML,'');assert.match(a.nodes.get('home-storage-status').textContent,/未送信/);
+});
+test('chosen invoice date drives preview, saved copy and CSV without changing billing period',()=>{
+ const {run}=app();run(`renderInvoiceScreen=()=>{};`);
+ assert.equal(run(`setInvoiceDate('2026-10-05')`),true);
+ assert.match(run(`buildInvoiceSheet(state.entries,invoiceTotals(state.entries),false)`),/2026年10月5日/);
+ run(`finalizeInvoice();window.original=JSON.stringify(state.invoices[0]);`);
+ assert.equal(run('state.invoices[0].invoiceDate'),'2026-10-05');assert.equal(run('state.invoices[0].period.end'),'2026-09-30');
+ run(`downloadCsv=(name,rows)=>window.csv=rows;exportInvoiceCsv();`);assert.equal(run(`window.csv.find(row=>row[0]==='請求書の日付')[1]`),'2026-10-05');
+ assert.equal(run(`setInvoiceDate('2026-10-06')`),false);assert.equal(run('JSON.stringify(state.invoices[0])===window.original'),true);
+ const restored=data.validateBackup(JSON.parse(run('JSON.stringify(state)')));assert.equal(restored.invoices[0].invoiceDate,'2026-10-05');
+});
+test('invoice dates are isolated by company and period; invalid input leaves chosen date intact',()=>{
+ const {run}=app();run(`renderInvoiceScreen=()=>{};setInvoiceDate('2026-10-05');`);
+ assert.equal(run(`setInvoiceDate('2026-02-30')`),false);assert.equal(run(`setInvoiceDate('')`),false);assert.equal(run('invoiceDateValue()'),'2026-10-05');
+ run(`selectedCompany='Other';`);assert.equal(run('invoiceDateValue()'),'2026-09-30');
+ run(`selectedCompany='Test';cursor=fromYmd('2026-10-01');`);assert.equal(run('invoiceDateValue()'),'2026-10-31');
+ run(`cursor=fromYmd('2026-09-01');`);assert.equal(run('invoiceDateValue()'),'2026-10-05');
+});
+test('legacy copies retain their former displayed date and revisions preserve date until changed',()=>{
+ const {run}=app();run(`renderInvoiceScreen=()=>{};finalizeInvoice();delete state.invoices[0].invoiceDate;state.invoices[0].issuedAt='2026-10-05T00:00:00Z';window.original=clone(state.invoices[0]);`);
+ assert.equal(run('withInvoice(state.invoices[0],()=>invoiceDateValue())'),'2026-10-05');
+ run(`invoiceRevisionDraft={...clone(window.original),invoiceDate:invoiceDateValue(window.original),id:'',issuedAt:'',revises:window.original.id};selectedInvoiceId='';setInvoiceDate('2026-10-10');finalizeInvoice();`);
+ assert.equal(run('state.invoices[1].invoiceDate'),'2026-10-10');assert.equal(run('state.invoices[0].invoiceDate'),undefined);
+ const s=JSON.parse(run('JSON.stringify(state)'));s.invoices[1].invoiceDate='2026-02-30';assert.throws(()=>data.validateBackup(s),/請求書の日付/);
+});
+test('distinct invoice dates are not deduplicated and survive cloud merge',async()=>{
+ const {run}=app();run(`renderInvoiceScreen=()=>{};setInvoiceDate('2026-10-05');finalizeInvoice();selectedInvoiceId='';setInvoiceDate('2026-10-06');finalizeInvoice();`);
+ assert.equal(run('state.invoices.length'),2);
+ const s=JSON.parse(run('JSON.stringify(state)')),c=cloud();await c.write({version:3,state:s});
+ const result=await c.write({version:3,state:{entries:[],settings:{},invoices:[]}});
+ assert.deepEqual(Array.from(result.payload.state.invoices,i=>i.invoiceDate).sort(),['2026-10-05','2026-10-06']);
 });

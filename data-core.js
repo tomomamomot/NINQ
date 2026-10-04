@@ -95,6 +95,7 @@
     for (const invoice of state.invoices || []) {
       if (!invoice.id || invoiceIds.has(invoice.id) || !invoice.snapshot || !invoice.totals || !validDate(invoice.period?.start) || !validDate(invoice.period?.end)) throw new Error('確定請求書の確認が必要です');
       invoiceIds.add(invoice.id);
+      if (invoice.invoiceDate !== undefined && !validDate(invoice.invoiceDate)) throw new Error('請求書の日付を確認してください');
       try { validateBackup({entries:invoice.snapshot.entries, settings:invoice.snapshot.settings}, {allowNegative:true}); }
       catch (error) { throw new Error(`保存した請求書の控え：${invoice.company || ''} ${invoice.period.start}〜${invoice.period.end}（${invoice.issuedAt || '保存日時不明'}）\n${error.message}`); }
       for (const key of ['subtotal','tax','total','expenseTotal']) if (!Number.isFinite(invoice.totals[key])) throw new Error('請求金額の確認が必要です');
@@ -120,7 +121,7 @@
     for (const invoice of state.invoices || []) for (const message of entryValueIssues(invoice.snapshot?.entries || [], invoice.snapshot?.settings?.expenseItems || [])) result.push({kind:'invoice',id:invoice.id,message:`${invoice.company} ／ ${invoice.period.start}〜${invoice.period.end} ／ 保存 ${invoice.issuedAt ? new Date(invoice.issuedAt).toLocaleString('ja-JP') : '日時不明'}\n${message}\n保存当時の内容です。現在の予定の修正では変わりません。必要に応じて訂正版を作成するか、不要な控えを削除してください。`});
     return result;
   }
-  function invoiceContentKey(invoice) { return canonical({company:invoice.company,period:invoice.period,snapshot:invoice.snapshot,totals:invoice.totals,revises:invoice.revises || ''}); }
+  function invoiceContentKey(invoice) { return canonical({company:invoice.company,period:invoice.period,snapshot:invoice.snapshot,totals:invoice.totals,invoiceDate:invoice.invoiceDate || null,revises:invoice.revises || ''}); }
   root.NinqData = {copy, mergeItems, mergeMaps, mergeStates, validDate, validateBackup, expenseColumns, paperColumns, diagnostics, invoiceContentKey};
   if (typeof module !== 'undefined') module.exports = root.NinqData;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

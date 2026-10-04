@@ -6,7 +6,7 @@ const LEGACY_STORE_KEYS = [['s', 'hokunin3'].join(''), ['g', 'enba-box-v2'].join
 const DRIVE_SYNC_FILE = 'ninq-sync.json';
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
-const APP_VERSION = 'v2026.09.29-1';
+const APP_VERSION = 'v2026.10.05-1';
 const FIREBASE_POLL_INTERVAL_MS = 45000;
 const RECEIPT_REMOVAL_AT = '2026-07-18T00:00:00.000Z';
 const DEFAULT_EXPENSE_ITEMS = ['交通費', '駐車場代', '宿泊費', 'ガソリン代', '資材代', 'その他'];
@@ -1318,8 +1318,24 @@ function renderSubScreen() {
   body.innerHTML = `<div class="sub-total-grid"><div class="sub-stat"><div class="k">外注人数</div><div class="v">${people.length}人</div></div><div class="sub-stat"><div class="k">支払合計</div><div class="v ${hidden ? 'hidden-amount' : ''}">${yen(totalPay, hidden)}</div></div><div class="sub-stat"><div class="k">差額合計</div><div class="v ${hidden ? 'hidden-amount' : ''}">${yen(totalDiff, hidden)}</div></div><div class="sub-stat"><div class="k">人工合計</div><div class="v">${qtyLabel(totalDays)}</div></div></div><div class="btn-row" style="padding:0 16px 10px"><button class="btn-primary" data-export-sub-payments>支払いCSV出力</button></div>${people.map(([name, info]) => `<div class="sub-card"><div class="sub-card-hd"><div><div class="sub-card-name">${escapeHtml(name)}</div><div class="sub-card-sub">${[...info.companies].join(' / ') || '会社未入力'}</div></div><div><div class="sub-card-amt ${hidden ? 'hidden-amount' : ''}">${yen(info.pay, hidden)}</div><div class="sub-card-meta">${qtyLabel(info.days)}人工 / 差額 ${yen(info.diff, hidden)}</div></div></div><div class="sub-card-foot">${info.entries.map((entry) => { const calc = calcEntry(entry); return `<span class="etag">${fmtDateJP(entry.date)} ${escapeHtml(entry.site || '現場')} 支払 ${yen(calc.subcontractPay, hidden)}</span>`; }).join('')}</div></div>`).join('')}`;
 }
 const DEMEN_EXPENSE_LABELS = ['交通費', '駐車場代', '宿泊代', 'ガソリン代', '資材等', '他諸経費'];
+const invoiceDraftDates = new Map();
+function invoiceDraftDateKey() { return JSON.stringify([selectedCompany,companyBillingRange(selectedCompany)]); }
+function invoiceDateValue(context = invoiceRenderContext) {
+  if (context) return context.invoiceDate || (context.issuedAt ? toYmd(new Date(context.issuedAt)) : context.period.end);
+  return invoiceDraftDates.get(invoiceDraftDateKey()) || companyBillingRange(selectedCompany).end;
+}
+function invoiceDateControl(context = null, readOnly = false) {
+  const value = invoiceDateValue(context);
+  return readOnly ? `<p>請求書の日付：${escapeHtml(value)}（変更は「訂正版を作成」から）</p>` : `<label class="invoice-date-control">請求書の日付<input type="date" data-invoice-date value="${escapeHtml(value)}" required><small>請求対象の期間は変わりません</small></label>`;
+}
+function setInvoiceDate(value) {
+  if (selectedInvoiceId || !NinqData.validDate(value)) return false;
+  if (invoiceRevisionDraft) invoiceRevisionDraft.invoiceDate = value;
+  else invoiceDraftDates.set(invoiceDraftDateKey(),value);
+  renderInvoiceScreen(); return true;
+}
 function invoiceDateLabel() {
-  const end = fromYmd((invoiceRenderContext?.issuedAt ? toYmd(new Date(invoiceRenderContext.issuedAt)) : '') || invoiceRenderContext?.period.end || companyBillingRange(selectedCompany).end);
+  const end = fromYmd(invoiceDateValue());
   return `${end.getFullYear()}年${end.getMonth() + 1}月${end.getDate()}日`;
 }
 function entriesForInvoiceCompany() {
@@ -1676,7 +1692,7 @@ function renderInvoiceScreen() {
   const entries = entriesForInvoiceCompany();
   const totals = invoiceTotals(entries);
   const invoiceFontSize = fontSizeLevel(state.settings.invoiceFontSize);
-  body.innerHTML = `<div class="invoice-tool-row"><strong>現在の予定から作成</strong><button class="btn-primary" data-finalize-invoice>請求書の控えを保存</button><span class="billing-period-label">${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</span><label>請求書フォント<select id="invoice-font-size-select">${fontSizeOptions(invoiceFontSize)}</select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
+  body.innerHTML = `<div class="invoice-tool-row"><strong>現在の予定から作成</strong>${invoiceDateControl()}<button class="btn-primary" data-finalize-invoice>請求書の控えを保存</button><span class="billing-period-label">${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</span><label>請求書フォント<select id="invoice-font-size-select">${fontSizeOptions(invoiceFontSize)}</select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
 }
 function syncStatusText() {
   const pending = loadSyncPending();
@@ -3116,7 +3132,7 @@ function exportInvoiceCsv() {
   const issued = selectedInvoiceId ? state.invoices.find(item => item.id === selectedInvoiceId) : invoiceRevisionDraft;
   if (issued && !invoiceRenderContext) return withInvoice(issued, () => exportInvoiceCsv());
   const totals = invoiceRenderContext?.totals || invoiceTotals(entriesForInvoiceCompany());
-  downloadCsv(`${reportFileBase('請求書')}.csv`, [['請求先', companyOfficialName(selectedCompany)], ['対象月', fmtMonth(cursor)], ['対象期間', companyBillingPeriodLabel(selectedCompany)], ['売上方式', '金額'], ['人工売上', totals.labor], ['請負金額', totals.contract], ['残業', totals.overtime], ['売上（税別）', totals.subtotal], ['消費税', totals.tax], ['諸経費', totals.expenseTotal], ['合計', totals.total]]);
+  downloadCsv(`${reportFileBase('請求書')}.csv`, [['請求先', companyOfficialName(selectedCompany)], ['請求書の日付', invoiceDateValue()], ['対象月', fmtMonth(cursor)], ['対象期間', companyBillingPeriodLabel(selectedCompany)], ['売上方式', '金額'], ['人工売上', totals.labor], ['請負金額', totals.contract], ['残業', totals.overtime], ['売上（税別）', totals.subtotal], ['消費税', totals.tax], ['諸経費', totals.expenseTotal], ['合計', totals.total]]);
 }
 function printView(kind) {
   const screen = document.getElementById('sc-inv');
