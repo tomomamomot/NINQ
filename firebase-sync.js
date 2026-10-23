@@ -75,18 +75,31 @@ async function signIn() {
 }
 
 async function readState({uid} = {}) {
-  const snapshot = await getDoc(stateRef(uid));
-  if (currentUser?.uid !== uid) throw new Error('ログイン状態が変わりました');
-  if (!snapshot.exists()) return null;
-  return snapshot.data()?.payload || null;
+  const ref=stateRef(uid);
+  return runTransaction(db,async transaction=>{
+    const snapshot=await transaction.get(ref);
+    const result=await readCloudPayload(transaction,uid,snapshot.exists()?snapshot.data():null);
+    if(currentUser?.uid!==uid) throw new Error('ログイン状態が変わりました');
+    return result;
+  });
 }
 
+function partRef(uid,index) { return doc(db,'users',uid,'state',`part-${String(index).padStart(4,'0')}`); }
+async function readCloudPayload(transaction,uid,main) {
+  if(!main) return null;
+  if(!main.storageVersion) return main.payload || null;
+  const count=window.NinqCloudFormat.partCount(main);
+  const snapshots=await Promise.all(Array.from({length:count},(_,i)=>transaction.get(partRef(uid,i))));
+  return window.NinqCloudFormat.unpack(main,snapshots.map(snapshot=>snapshot.exists()?snapshot.data():null));
+}
 async function syncState(payload, {uid, expectedGeneration, merge}) {
   const ref = stateRef(uid);
   return runTransaction(db, async transaction => {
     const snapshot = await transaction.get(ref);
     if (currentUser?.uid !== uid) throw new Error('ログイン状態が変わりました');
-    const remote = snapshot.exists() ? snapshot.data().payload : null;
+    const main=snapshot.exists()?snapshot.data():null;
+    const remote = await readCloudPayload(transaction,uid,main);
+    if (currentUser?.uid !== uid) throw new Error('ログイン状態が変わりました');
     if (remote) window.NinqData.validateBackup(remote, {skipEntryValues:true});
     window.NinqData.validateBackup(payload);
     const remoteGeneration = remote?.state?.restoreGeneration || 'initial';
@@ -110,9 +123,12 @@ async function syncState(payload, {uid, expectedGeneration, merge}) {
     if (remote && JSON.stringify(next.state) === JSON.stringify(remote.state)) return {conflict:false,payload:remote,generation:remoteGeneration};
     next.generation = next.state.restoreGeneration || 'initial';
     next.revision = (snapshot.data()?.revision || 0) + 1;
-    // Conservative guard: the server remains the authority for the exact encoded size.
-    if (new TextEncoder().encode(JSON.stringify(next)).length > 800000) throw new Error('クラウド保存容量に近づいています。データを書き出し、保存構造の更新が必要です');
-    transaction.set(ref, {payload:next, revision:next.revision, modifiedAt:next.modifiedAt || '',
+    const encoded=window.NinqCloudFormat.pack(next,next.revision);
+    // All reads precede writes; Firestore commits the manifest and every part atomically.
+    // The original document is retained once, for recovery from the old format.
+    if(main && !main.storageVersion) transaction.set(doc(db,'users',uid,'state','legacy-before-v4'),main);
+    encoded.parts.forEach((part,index)=>transaction.set(partRef(uid,index),part));
+    transaction.set(ref, {...encoded.manifest, modifiedAt:next.modifiedAt || '',
       appVersion:next.appVersion || '', syncedAt:new Date().toISOString(), updatedAt:serverTimestamp()});
     return {conflict:false, payload:next, generation:next.generation};
   });

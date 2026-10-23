@@ -138,19 +138,84 @@ test('closing date and multi-day contract retain one charge',()=>{
  run(`state.entries=[normalizeEntry(${JSON.stringify(entry('a',{date:'2026-09-05',billingType:'contract',rangeGroupId:'g',rangeStart:'2026-09-05',rangeEnd:'2026-09-06',contractAmount:100000}))}),normalizeEntry(${JSON.stringify(entry('b',{billingType:'contract',rangeGroupId:'g',rangeStart:'2026-09-05',rangeEnd:'2026-09-06',contractAmount:100000}))})];`);assert.equal(run('invoiceTotals(state.entries).contract'),100000);
 });
 function cloud(initial=null){
- let saved=initial,revision=0,retries=0;
- const context=vm.createContext({TextEncoder,Date,JSON,window:{NinqData:data},currentUser:{uid:'A'},db:{},serverTimestamp:()=>0,doc:()=>({}),runTransaction:async(db,fn)=>{
+ let saved=new Map(initial?[['users/A/state/main',initial]]:[]),revision=0,retries=0;
+ const format=require('../cloud-format.js');
+ const context=vm.createContext({TextEncoder,Date,JSON,window:{NinqData:data,NinqCloudFormat:format},currentUser:{uid:'A'},db:{},serverTimestamp:()=>0,doc:(db,...parts)=>parts.join('/'),runTransaction:async(db,fn)=>{
    for(let attempt=0;attempt<5;attempt++){
-     const readRevision=revision,read=saved;let write;
-     const result=await fn({get:async()=>({exists:()=>read!==null,data:()=>read}),set:(ref,next)=>{write=next;}});
+     const readRevision=revision,read=new Map(saved),writes=new Map();
+     const result=await fn({get:async(ref)=>{assert.equal(writes.size,0,'reads precede writes');return {exists:()=>read.has(ref),data:()=>read.get(ref)}},set:(ref,next)=>{writes.set(ref,next);}});
      if(readRevision!==revision){retries++;continue;}
-     if(write){saved=write;revision++;}return result;
+     if(context.denyWrites && writes.size) throw Error('permission-denied');
+     if(writes.size){for(const [key,value] of writes)saved.set(key,value);revision++;}return result;
    }
    throw Error('transaction retries exhausted');
  }});
- const source=fs.readFileSync('firebase-sync.js','utf8');vm.runInContext(source.slice(source.indexOf('function stateRef('),source.indexOf('async function signIn('))+source.slice(source.indexOf('async function syncState('),source.indexOf('window.NinqFirebaseCloud')),context);
- return {context,write:(payload,expectedGeneration='initial')=>context.syncState(payload,{uid:'A',expectedGeneration,merge:(a,b)=>data.mergeStates(a,b,(a,b)=>({...b,...a}))}),get:()=>saved,retries:()=>retries};
+ const source=fs.readFileSync('firebase-sync.js','utf8');vm.runInContext(source.slice(source.indexOf('function stateRef('),source.indexOf('async function signIn('))+source.slice(source.indexOf('async function readState('),source.indexOf('window.NinqFirebaseCloud')),context);
+ const get=()=>{const main=saved.get('users/A/state/main');if(!main)return null;if(!main.storageVersion)return main;return {...main,payload:format.unpack(main,Array.from({length:main.partCount||0},(_,i)=>saved.get('users/A/state/part-'+String(i).padStart(4,'0'))))};};
+ return {context,write:(payload,expectedGeneration='initial')=>context.syncState(payload,{uid:'A',expectedGeneration,merge:(a,b)=>data.mergeStates(a,b,(a,b)=>({...b,...a}))}),get,retries:()=>retries,documents:()=>saved};
 }
+test('cloud migrates more than 800 KB atomically and retains the legacy document',async()=>{
+ const original={payload:{version:3,state:{entries:[entry('old')],settings:{},restoreGeneration:'initial'}},revision:7};
+ const c=cloud(original),notes='日本語😀'.repeat(80000);
+ await c.write({version:3,state:{entries:[entry('phone',{notes})],settings:{},restoreGeneration:'initial'}});
+ assert.equal(c.get().payload.state.entries.find(e=>e.id==='phone').notes,notes);
+ assert.equal(c.documents().get('users/A/state/legacy-before-v4'),original);
+ const main=c.documents().get('users/A/state/main');assert.equal(main.storageVersion,1);assert.ok(main.partCount>4);
+ assert.throws(()=>data.validateBackup(main.payload),/バージョン/);
+ const read=await c.context.readState({uid:'A'});assert.equal(read.state.entries.length,2);
+ for(const [key,value] of c.documents())if(key.includes('/part-'))assert.ok(Buffer.byteLength(JSON.stringify(value))<800000);
+});
+test('permission failure during migration leaves every cloud document untouched',async()=>{
+ const original={payload:{version:3,state:{entries:[entry('old')],settings:{}}}},c=cloud(original);
+ c.context.denyWrites=true;
+ await assert.rejects(c.write({version:3,state:{entries:[entry('phone')],settings:{}}}),/permission-denied/);
+ assert.equal(c.documents().size,1);assert.equal(c.get(),original);
+});
+test('missing, mixed-revision and malformed cloud parts fail without overwriting',async()=>{
+ for(const corruption of ['missing','revision','count']) {
+   const c=cloud();await c.write({version:3,state:{entries:[entry('phone')],settings:{}}});
+   if(corruption==='missing')c.documents().delete('users/A/state/part-0000');
+   if(corruption==='revision')c.documents().get('users/A/state/part-0000').revision--;
+   if(corruption==='count')c.documents().get('users/A/state/main').partCount=99999;
+   const before=JSON.stringify([...c.documents()]);
+   await assert.rejects(c.write({version:3,state:{entries:[],settings:{}}}));
+   assert.equal(JSON.stringify([...c.documents()]),before);
+ }
+});
+test('two large concurrent writers retain both changes and stale parts are ignored after restore',async()=>{
+ const c=cloud();await Promise.all(['phone','pc'].map(id=>c.write({version:3,state:{entries:[entry(id,{notes:'日本語😀'.repeat(70000)})],settings:{},restoreGeneration:'initial'}})));
+ assert.deepEqual(c.get().payload.state.entries.map(e=>e.id).sort(),['pc','phone']);assert.ok(c.retries()>0);
+ const count=c.documents().get('users/A/state/main').partCount;
+ await c.write({version:3,state:{entries:[entry('restored')],settings:{},restoreGeneration:'new',pendingRestore:{base:'initial'}}});
+ assert.ok(count>c.documents().get('users/A/state/main').partCount);
+ assert.deepEqual(c.get().payload.state.entries.map(e=>e.id),['restored']);
+ const stale=await c.write({version:3,state:{entries:[entry('stale')],settings:{},restoreGeneration:'initial'}});
+ assert.equal(stale.conflict,true);assert.deepEqual(c.get().payload.state.entries.map(e=>e.id),['restored']);
+});
+test('phone latest 580 entries reach the stale 562-entry PC through the real sync path',async()=>{
+ const phone=app(),pc=app(),c=cloud();
+ for(const client of [phone,pc]) {
+   client.run(`activeOwner='A';firebaseUser={uid:'A'};state.settings.googleSyncEnabled=true;`);
+   client.context.window.NinqFirebaseCloud={syncState:(payload,options)=>c.context.syncState(payload,options)};
+ }
+ pc.run(`state.entries=Array.from({length:562},(_,i)=>({...state.entries[0],id:'entry'+i,notes:'old'}));`);
+ await pc.run('safeSyncCloud()');
+ phone.run(`state.entries=Array.from({length:580},(_,i)=>({...state.entries[0],id:'entry'+i,date:'2026-10-22',notes:'最新の架空データ'.repeat(100),updatedAt:'2026-10-22T10:00:00Z'}));saveState();`);
+ await phone.run('safeSyncCloud()');await pc.run('safeSyncCloud()');
+ assert.equal(pc.run('state.entries.length'),580);assert.equal(pc.run('state.entries.every(e=>e.date===\'2026-10-22\')'),true);
+ assert.equal(pc.run('loadSyncPending().pending'),false);assert.ok(pc.run('loadSyncMeta().lastSyncedAt'));
+ assert.equal(c.get().payload.state.entries.length,580);
+ assert.equal(pc.run(`JSON.parse(localStorage.getItem(scopedKey(STORE_KEY))).entries.length`),580);
+});
+test('sync automatically archives recovery copies when local capacity blocks saving',async()=>{
+ const a=app(),c=cloud();a.run(`activeOwner='A';firebaseUser={uid:'A'};saveRecovery('before');window.originalSet=localStorage.setItem;localStorage.setItem=(k,v)=>{if(k.startsWith('ninq-v2')&&Array.from({length:localStorage.length},(_,i)=>localStorage.key(i)).some(k=>k.startsWith('ninq-recovery-')))throw Error('quota');window.originalSet(k,v)};saveState();window.archived=[];globalThis.NinqRecoveryStore={archive:async(k,raw)=>window.archived.push(raw)};`);
+ a.context.window.NinqFirebaseCloud={syncState:(payload,options)=>c.context.syncState(payload,options)};
+ await a.run('safeSyncCloud()');assert.equal(a.run('window.archived.length'),1);assert.equal(a.run('storageFailure'),'');assert.equal(a.run('loadSyncPending().pending'),false);assert.equal(c.get().payload.state.entries.length,1);
+});
+test('failed local archive never sends an unsaved local state to cloud',async()=>{
+ const a=app();a.run(`activeOwner='A';firebaseUser={uid:'A'};saveRecovery('before');storageFailure='quota';window.calls=0;window.NinqFirebaseCloud={syncState:async()=>{window.calls++}};globalThis.NinqRecoveryStore={archive:async()=>{throw Error('quota')}};`);
+ await a.run('safeSyncCloud()');assert.equal(a.run('window.calls'),0);assert.equal(a.run('state.entries.length'),1);assert.equal(a.run('storageFailure'),'quota');
+});
 test('two cloud writers preserve independent records',async()=>{
  const c=cloud();await Promise.all(['a','b'].map(id=>c.write({version:3,state:{entries:[entry(id)],settings:{},restoreGeneration:'initial'}})));assert.deepEqual(c.get().payload.state.entries.map(e=>e.id).sort(),['a','b']);assert.ok(c.retries()>0);
 });
@@ -158,7 +223,7 @@ test('cloud restore rejects older generation without writing',async()=>{
  const c=cloud();await c.write({version:3,state:{entries:[entry('a')],settings:{},restoreGeneration:'initial'}});await c.write({version:3,state:{entries:[],settings:{},restoreGeneration:'new',pendingRestore:{base:'initial'}}});const result=await c.write({version:3,state:{entries:[entry('a')],settings:{},restoreGeneration:'initial'}});assert.equal(result.conflict,true);assert.equal(c.get().payload.state.entries.length,0);
 });
 test('cloud rejects oversized payload and mismatched account',async()=>{
- const c=cloud();await assert.rejects(c.write({state:{entries:[],settings:{text:'x'.repeat(800001)}}}),/容量/);assert.equal(c.get(),null);c.context.currentUser={uid:'B'};await assert.rejects(c.write({state:{entries:[],settings:{}}}),/ログイン/);
+ const c=cloud();await assert.rejects(c.write({state:{entries:[],settings:{text:'x'.repeat(6500000)}}}),/上限/);assert.equal(c.get(),null);c.context.currentUser={uid:'B'};await assert.rejects(c.write({state:{entries:[],settings:{}}}),/ログイン/);
 });
 test('backup add preserves current records and requires confirmation only for replacement',()=>{
  const {run}=app();run(`pendingBackup=normalizeState({entries:[${JSON.stringify(entry('b'))}],settings:{}});pendingBackupOwner=activeOwner;`);assert.equal(run(`commitBackup('add')`),true);assert.equal(run('state.entries.length'),2);assert.equal(run('state.restoreGeneration'),'initial');

@@ -53,7 +53,9 @@ function activateAccount(user) {
 async function safeSyncCloud({auto = false, reason = ''} = {}) {
   if (pendingBackup) return; // Keep the reviewed local state stable during recovery.
   if (activeScreen === 'st') flushSettingsAutosave();
-  if (!firebaseUser || activeOwner !== firebaseUser.uid || !firebaseAvailable() || storageBlocked || storageFailure) return;
+  if (!firebaseUser || activeOwner !== firebaseUser.uid || !firebaseAvailable() || storageBlocked) return;
+  if (storageFailure && !await retryLocalStorage(activeOwner,accountEpoch)) return;
+  if (pendingBackup || !firebaseUser || activeOwner !== firebaseUser.uid) return;
   if (auto && !state.settings.googleSyncEnabled) return;
   if (!navigator.onLine) { saveSyncPending(true,'offline'); renderSyncScreen(); return; }
   if (auto && isEditingSyncSensitiveField()) { scheduleFirebaseAutoSync({delay:8000,reason}); return; }
@@ -75,24 +77,27 @@ async function safeSyncCloud({auto = false, reason = ''} = {}) {
       saveRecovery('別端末で復元済み：この端末のデータを退避', state);
       state = normalizeState(result.payload.state || result.payload);
       state.pendingRestore = null;
-      if (!saveState()) return;
+      if (!saveState() && !await retryLocalStorage(uid,epoch)) return;
+      if (!accountMatches(uid,epoch)) return;
       cloudIssue = '別端末でデータが復元されました。この端末の変更は復旧用コピーに退避しました';
     } else {
       // A restore made while this request was in flight must be sent as its own generation.
       if (state.restoreGeneration !== submitted.restoreGeneration) { firebaseSyncQueued = true; return; }
       state = mergeSafeStates(state, result.payload.state);
       state.pendingRestore = null;
-      if (!saveState()) return;
+      if (!saveState() && !await retryLocalStorage(uid,epoch)) return;
+      if (!accountMatches(uid,epoch)) return;
+      if (pendingBackup || state.restoreGeneration !== submitted.restoreGeneration) { firebaseSyncQueued=true;return; }
     }
     saveSyncMeta({lastSyncedAt:new Date().toISOString(),lastCloudModifiedAt:result.payload.modifiedAt || '',lastLocalModifiedAt:localModifiedAt()});
     const changedDuringSync = !result.conflict && revision + 1 !== localRevision;
     saveSyncPending(changedDuringSync, changedDuringSync ? 'save' : '');
     if (changedDuringSync) firebaseSyncQueued = true;
-    setSyncLog(cloudIssue || '同期済み：PC・スマホのデータを保存しました');
+    setSyncLog(cloudIssue || `クラウド同期済み：${state.entries.length}予定・${state.invoices.length}控え`);
     renderAll();
   } catch (error) {
     if (!accountMatches(uid, epoch)) return;
-    cloudIssue = error.message || '同期に失敗しました';
+    cloudIssue = error.code === 'permission-denied' ? 'クラウド側の保存許可を確認する必要があります。端末のデータは保持しています。この表示をお知らせください。' : error.message || '同期に失敗しました';
     cloudIssueWasLocal = NinqData.diagnostics(submitted).some(item => item.kind === 'entry');
     if (revision !== localRevision) firebaseSyncQueued = true;
     saveSyncPending(true, 'retry'); setSyncLog(cloudIssue);
@@ -143,6 +148,32 @@ function prepareBackup(payload) {
 }
 let backupRecoveryRevision = -1;
 let movingRecoveryCopies = false;
+async function archiveLocalRecoveryCopies(owner,epoch) {
+  const keys=[];
+  for(let i=0;i<localStorage.length;i++) {
+    const key=localStorage.key(i);
+    if(key?.startsWith('ninq-recovery-') && key.endsWith(`:${owner}`)) keys.push(key);
+  }
+  for(const key of keys) {
+    if(activeOwner!==owner || accountEpoch!==epoch) return 0;
+    const raw=localStorage.getItem(key);
+    if(raw===null) continue;
+    await NinqRecoveryStore.archive(key,raw,owner);
+    if(activeOwner!==owner || accountEpoch!==epoch) return 0;
+    if(localStorage.getItem(key)===raw) localStorage.removeItem(key);
+  }
+  return keys.length;
+}
+async function retryLocalStorage(owner,epoch) {
+  if(movingRecoveryCopies || typeof NinqRecoveryStore==='undefined') return false;
+  movingRecoveryCopies=true;
+  try {
+    await archiveLocalRecoveryCopies(owner,epoch);
+    if(activeOwner!==owner || accountEpoch!==epoch) return false;
+    return saveState();
+  } catch(error) { return false; }
+  finally { movingRecoveryCopies=false; }
+}
 function offerRecoveryMigration() {
   const host=document.getElementById('backup-operation-status');
   const button=document.createElement('button');
@@ -156,22 +187,9 @@ async function migrateRecoveryCopies() {
   movingRecoveryCopies=true;
   setBackupOperationStatus('復旧用コピーを別の端末内保存領域へ移しています。元の予定は変更していません。');
   try {
-    const keys=[];
-    for(let i=0;i<localStorage.length;i++) {
-      const key=localStorage.key(i);
-      if(key?.startsWith('ninq-recovery-') && key.endsWith(`:${owner}`)) keys.push(key);
-    }
-    if(!keys.length) throw new Error('移動できる復旧用コピーがありません。ブラウザーのデータは削除せず、このメッセージをお知らせください。');
-    for(const key of keys) {
-      if(activeOwner!==owner || accountEpoch!==epoch) return;
-      const raw=localStorage.getItem(key);
-      if(raw===null) continue;
-      await NinqRecoveryStore.archive(key,raw,owner);
-      if(activeOwner!==owner || accountEpoch!==epoch) return;
-      // Another tab may have changed a key while the database write was running.
-      if(localStorage.getItem(key)===raw) localStorage.removeItem(key);
-    }
+    const count=await archiveLocalRecoveryCopies(owner,epoch);
     if(activeOwner!==owner || accountEpoch!==epoch || pendingBackup!==backup) return;
+    if(!count) throw new Error('移動できる復旧用コピーがありません。ブラウザーのデータは削除せず、このメッセージをお知らせください。');
     setBackupOperationStatus('復旧用コピーの保存先を整理しました。コピーは「復旧用コピー」から引き続き書き出せます。下の件数付きの「予定に置き換える」ボタン、または「追加」を押してください。');
     renderRecoveryList();
   } catch(error) {
