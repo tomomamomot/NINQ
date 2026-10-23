@@ -1,6 +1,11 @@
 const {test}=require('node:test'), assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {randomUUID}=require('node:crypto'), data=require('../data-core.js');
 const entry=(id,extra={})=>({id,date:'2026-09-06',company:'Test',qty:1,unitRate:20000,updatedAt:'2026-09-06T00:00:00Z',...extra});
+test('recovery entry always loads current assets without running the cached old root app',()=>{
+ const html=fs.readFileSync('index.html','utf8').replaceAll('\r\n','\n'),recovery=fs.readFileSync('sync-recovery.html','utf8').replaceAll('\r\n','\n');
+ assert.equal(recovery.replace('\n<!-- Recovery entry: bypasses cached root navigation without touching user storage. Keep identical to index.html. -->',''),html);
+ const sw=fs.readFileSync('sw.js','utf8');assert.ok(sw.includes("![basePath, `${basePath}index.html`].includes(url.pathname)"));
+});
 test('recovery migration removes only verified copies belonging to the active account',async()=>{
  const {run,memory}=app();run(`prepareBackup({entries:[],settings:{}});window.key=saveRecovery('before');window.archive=new Map();globalThis.NinqRecoveryStore={archive:async(k,raw,owner)=>window.archive.set(k,{raw,owner}),list:async()=>[]};`);
  memory.set('ninq-recovery-other:another','private');memory.set('unrelated','keep');
