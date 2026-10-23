@@ -142,6 +142,45 @@ function prepareBackup(payload) {
   panel.scrollIntoView?.({block:'nearest'});
 }
 let backupRecoveryRevision = -1;
+let movingRecoveryCopies = false;
+function offerRecoveryMigration() {
+  const host=document.getElementById('backup-operation-status');
+  const button=document.createElement('button');
+  button.dataset.recoveryMigrate='';
+  button.textContent='復旧用コピーの保存先を整理する';
+  host.appendChild(button);
+}
+async function migrateRecoveryCopies() {
+  if (movingRecoveryCopies || !pendingBackup) return;
+  const owner=activeOwner, epoch=accountEpoch, backup=pendingBackup;
+  movingRecoveryCopies=true;
+  setBackupOperationStatus('復旧用コピーを別の端末内保存領域へ移しています。元の予定は変更していません。');
+  try {
+    const keys=[];
+    for(let i=0;i<localStorage.length;i++) {
+      const key=localStorage.key(i);
+      if(key?.startsWith('ninq-recovery-') && key.endsWith(`:${owner}`)) keys.push(key);
+    }
+    if(!keys.length) throw new Error('移動できる復旧用コピーがありません。ブラウザーのデータは削除せず、このメッセージをお知らせください。');
+    for(const key of keys) {
+      if(activeOwner!==owner || accountEpoch!==epoch) return;
+      const raw=localStorage.getItem(key);
+      if(raw===null) continue;
+      await NinqRecoveryStore.archive(key,raw,owner);
+      if(activeOwner!==owner || accountEpoch!==epoch) return;
+      // Another tab may have changed a key while the database write was running.
+      if(localStorage.getItem(key)===raw) localStorage.removeItem(key);
+    }
+    if(activeOwner!==owner || accountEpoch!==epoch || pendingBackup!==backup) return;
+    setBackupOperationStatus('復旧用コピーの保存先を整理しました。コピーは「復旧用コピー」から引き続き書き出せます。下の件数付きの「予定に置き換える」ボタン、または「追加」を押してください。');
+    renderRecoveryList();
+  } catch(error) {
+    if(activeOwner===owner && accountEpoch===epoch) {
+      setBackupOperationStatus(`保存先の整理を完了できませんでした。元の予定は変更していません。移動済みのコピーも保持しています。詳細：${error.message}`);
+      offerRecoveryMigration();
+    }
+  } finally { movingRecoveryCopies=false; }
+}
 function setBackupOperationStatus(message) {
   const host = document.getElementById('backup-operation-status');
   if (host) { host.textContent = message; host.hidden = !message; }
@@ -152,7 +191,7 @@ function commitBackup(mode, {confirmed = false} = {}) {
     if (mode === 'replace' && !confirmed && !confirm('現在のデータを置き換えます。元データの復旧用コピーを端末に残します。続けますか？')) return false;
     if (backupRecoveryRevision !== localRevision) {
       try { saveRecovery('バックアップ読み込み前'); backupRecoveryRevision = localRevision; }
-      catch(error) { setBackupOperationStatus(`読み込みは完了していません。元データの復旧用コピーをこの端末に保存できませんでした。クラウドとは別の、ブラウザー内の保存容量・保存権限を確認してください。元データは変更していません。\n詳細：${error.message}`); return false; }
+      catch(error) { setBackupOperationStatus(`読み込みは完了していません。元データの復旧用コピーをこの端末に保存できませんでした。クラウドとは別の、ブラウザー内の保存容量・保存権限を確認してください。元データは変更していません。\n詳細：${error.message}`); offerRecoveryMigration(); return false; }
     }
     let next;
     if (mode === 'add') {
@@ -233,8 +272,10 @@ function installUpdateFlow() {
     });
   }).catch(() => { cloudIssue = 'オフライン用の保存に失敗しました'; renderSaveStatus(); });
 }
+let recoveryListRevision=0;
 function renderRecoveryList() {
   const host = document.getElementById('recovery-list'); if (!host) return;
+  const owner=activeOwner, revision=++recoveryListRevision;
   const keys = [];
   for (let i=0;i<localStorage.length;i++) { const key = localStorage.key(i); if (key?.startsWith('ninq-recovery-') && key.endsWith(`:${activeOwner}`)) keys.push(key); }
   host.innerHTML = keys.sort().reverse().map(key => {
@@ -242,6 +283,20 @@ function renderRecoveryList() {
     try { const data = JSON.parse(localStorage.getItem(key)); label = `${new Date(data.exportedAt).toLocaleString('ja-JP')} ${data.reason}`; } catch (error) {}
     return `<button data-recovery-export="${escapeHtml(key)}">${escapeHtml(label)}を書き出す</button>`;
   }).join('') || '<p>復旧用コピーはまだありません</p>';
+  if (typeof NinqRecoveryStore !== 'undefined') NinqRecoveryStore.list(owner).then(copies=>{
+    if(owner!==activeOwner || revision!==recoveryListRevision || document.getElementById('recovery-list')!==host) return;
+    if(copies.length && !keys.length) host.textContent='';
+    for(const copy of copies.sort((a,b)=>b.key.localeCompare(a.key))) {
+      if(keys.includes(copy.key)) continue;
+      const button=document.createElement('button');button.dataset.recoveryDatabaseExport=copy.key;
+      let label='復旧用コピー';
+      try { const data=JSON.parse(copy.raw);label=`${new Date(data.exportedAt).toLocaleString('ja-JP')} ${data.reason}`; } catch(error) {}
+      button.textContent=`${label}を書き出す`;host.appendChild(button);
+    }
+  }).catch(()=>{
+    if(owner!==activeOwner || revision!==recoveryListRevision) return;
+    const warning=document.createElement('p');warning.textContent='別の端末内保存領域の復旧用コピーを読み込めませんでした。';host.appendChild(warning);
+  });
 }
 function renderSafetySync() {
   const host = document.getElementById('safety-sync'); if (!host) return;
@@ -362,6 +417,13 @@ function initSafetyUi() {
       downloadText('ninq-rescue.json',raw || '{}','application/json'); return;
     }
     if (data.recoveryExport) { downloadText('ninq-recovery.json',localStorage.getItem(data.recoveryExport),'application/json'); return; }
+    if ('recoveryMigrate' in data) return migrateRecoveryCopies();
+    if (data.recoveryDatabaseExport) {
+      const owner=activeOwner,epoch=accountEpoch;
+      try { const raw=await NinqRecoveryStore.read(data.recoveryDatabaseExport,owner);if(owner===activeOwner && epoch===accountEpoch) downloadText('ninq-recovery.json',raw,'application/json'); }
+      catch(error) { if(owner===activeOwner && epoch===accountEpoch) setBackupOperationStatus(error.message); }
+      return;
+    }
     if (data.backupMode === 'replace') { document.getElementById('backup-replace-confirm').hidden = false; return; }
     if (data.backupMode) return commitBackup(data.backupMode);
     if ('backupConfirmReplace' in data) return commitBackup('replace',{confirmed:true});

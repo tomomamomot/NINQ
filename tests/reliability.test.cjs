@@ -1,6 +1,27 @@
 const {test}=require('node:test'), assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {randomUUID}=require('node:crypto'), data=require('../data-core.js');
 const entry=(id,extra={})=>({id,date:'2026-09-06',company:'Test',qty:1,unitRate:20000,updatedAt:'2026-09-06T00:00:00Z',...extra});
+test('recovery migration removes only verified copies belonging to the active account',async()=>{
+ const {run,memory}=app();run(`prepareBackup({entries:[],settings:{}});window.key=saveRecovery('before');window.archive=new Map();globalThis.NinqRecoveryStore={archive:async(k,raw,owner)=>window.archive.set(k,{raw,owner}),list:async()=>[]};`);
+ memory.set('ninq-recovery-other:another','private');memory.set('unrelated','keep');
+ await run('migrateRecoveryCopies()');assert.equal(run('window.archive.size'),1);assert.equal(memory.has(run('window.key')),false);
+ assert.equal(memory.get('ninq-recovery-other:another'),'private');assert.equal(memory.get('unrelated'),'keep');assert.equal(run('state.entries.length'),1);
+ assert.equal(run(`commitBackup('replace',{confirmed:true})`),true);
+});
+test('failed archive verification preserves the source recovery and all original entries',async()=>{
+ const {run,memory}=app();run(`prepareBackup({entries:[],settings:{}});window.key=saveRecovery('before');globalThis.NinqRecoveryStore={archive:async()=>{throw Error('readback mismatch')},list:async()=>[]};`);
+ await run('migrateRecoveryCopies()');assert.equal(memory.has(run('window.key')),true);assert.equal(run('state.entries.length'),1);assert.match(run(`document.getElementById('backup-operation-status').textContent`),/完了できません/);
+});
+test('account switch or concurrent source modification prevents recovery source removal',async()=>{
+ for(const action of ["activeOwner='other';accountEpoch++;","localStorage.setItem(window.key,'changed');"]) {
+   const {run,memory}=app();run(`prepareBackup({entries:[],settings:{}});window.key=saveRecovery('before');globalThis.NinqRecoveryStore={archive:()=>new Promise(resolve=>window.done=resolve),list:async()=>[]};window.work=migrateRecoveryCopies();${action}window.done();`);
+   await run('window.work');assert.equal(memory.has(run('window.key')),true);assert.equal(run('state.entries.length'),1);
+ }
+});
+test('double clicks cannot start concurrent recovery migrations',async()=>{
+ const {run}=app();run(`prepareBackup({entries:[],settings:{}});saveRecovery('before');window.calls=0;globalThis.NinqRecoveryStore={archive:()=>{window.calls++;return new Promise(resolve=>window.done=resolve)},list:async()=>[]};window.work=migrateRecoveryCopies();`);
+ await run('migrateRecoveryCopies()');assert.equal(run('window.calls'),1);run('window.done()');await run('window.work');
+});
 test('confirmed replacement restores 580 entries and reports local success separately from sync',()=>{
  const {run}=app();run(`state.entries=Array.from({length:562},(_,i)=>({...state.entries[0],id:'old'+i}));prepareBackup({entries:Array.from({length:580},(_,i)=>({...state.entries[0],id:'phone'+i})),settings:{}});confirm=()=>{throw Error('unexpected native dialog')};`);
  assert.equal(run(`commitBackup('replace',{confirmed:true})`),true);assert.equal(run('state.entries.length'),580);
