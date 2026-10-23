@@ -1692,7 +1692,7 @@ function renderInvoiceScreen() {
   const entries = entriesForInvoiceCompany();
   const totals = invoiceTotals(entries);
   const invoiceFontSize = fontSizeLevel(state.settings.invoiceFontSize);
-  body.innerHTML = `<div class="invoice-tool-row"><strong>現在の予定から作成</strong>${invoiceDateControl()}<button class="btn-primary" data-finalize-invoice>請求書の控えを保存</button><span class="billing-period-label">${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</span><label>請求書フォント<select id="invoice-font-size-select">${fontSizeOptions(invoiceFontSize)}</select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
+  body.innerHTML = `<div class="invoice-tool-row"><strong>現在の予定から作成</strong>${invoiceDateControl()}<button class="btn-primary" data-finalize-invoice>請求書の控えを保存</button><span class="billing-period-label">${escapeHtml(companyBillingPeriodLabel(selectedCompany))}</span><label>請求書フォント<select id="invoice-font-size-select">${fontSizeOptions(invoiceFontSize)}</select></label></div><div class="btn-row invoice-actions" style="padding:0 16px 10px"><button class="btn-primary" data-save-invoice>請求書PDF保存</button><button class="btn-gold" data-save-demen>出面表PDF保存</button><button class="btn-primary" data-print-invoice>請求書印刷</button><button class="btn-gold" data-print-demen>出面表印刷</button><button class="btn-secondary" data-export-invoice>請求CSV</button><button class="btn-secondary" data-export-demen>出面CSV</button></div>${buildInvoiceSheet(entries, totals, hidden)}${buildDemenSheet(entries, totals, hidden)}`;
 }
 function syncStatusText() {
   const pending = loadSyncPending();
@@ -3107,8 +3107,11 @@ function gcalEntry(id) {
 function csvCell(value) { let text = String(value ?? ''); if (typeof value === 'string' && /^[=+@-]/.test(text)) text = "'" + text; return `"${text.replaceAll('"', '""')}"`; }
 function downloadCsv(filename, rows) { const csv = `\ufeff${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}`; const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; link.click(); URL.revokeObjectURL(link.href); }
 function reportFileBase(kind) {
+  const issued = selectedInvoiceId ? state.invoices.find(item => item.id === selectedInvoiceId) : invoiceRevisionDraft;
+  if (issued && !invoiceRenderContext) return withInvoice(issued, () => reportFileBase(kind));
+  const company = String(selectedCompany || '取引先未設定').trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '');
   const month = `${cursor.getFullYear()}年${cursor.getMonth() + 1}月`;
-  return `${month}${kind}`;
+  return `${company}${month}${kind}`;
 }
 function exportDemenCsv() {
   const issued = selectedInvoiceId ? state.invoices.find(item => item.id === selectedInvoiceId) : invoiceRevisionDraft;
@@ -3324,6 +3327,8 @@ function bindEvents() {
     if (event.target.matches('[data-export-demen]')) exportDemenCsv();
     if (event.target.matches('[data-export-invoice]')) exportInvoiceCsv();
     if (event.target.matches('[data-export-sub-payments]')) exportSubPaymentsCsv();
+    if (event.target.closest('[data-save-invoice]')) printView('invoice');
+    if (event.target.closest('[data-save-demen]')) printView('demen');
     if (event.target.matches('[data-print-demen]')) printView('demen');
     if (event.target.matches('[data-print-invoice]')) printView('invoice');
     if (event.target.matches('[data-entry-type]')) {

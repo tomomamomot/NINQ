@@ -426,3 +426,12 @@ test('distinct invoice dates are not deduplicated and survive cloud merge',async
  const result=await c.write({version:3,state:{entries:[],settings:{},invoices:[]}});
  assert.deepEqual(Array.from(result.payload.state.invoices,i=>i.invoiceDate).sort(),['2026-10-05','2026-10-06']);
 });
+
+test('PDF filenames use company and target month with safe characters',()=>{
+ const {run}=app();
+ run("selectedCompany='稲野辺木工所';cursor=new Date(2026,6,1);selectedInvoiceId='';invoiceRevisionDraft=null;");
+ assert.equal(run("reportFileBase('請求書')"),'稲野辺木工所2026年7月請求書');
+ assert.equal(run("reportFileBase('出面表')"),'稲野辺木工所2026年7月出面表');
+ run("selectedCompany='A/B:社'");
+ assert.equal(run("reportFileBase('請求書')"),'A_B_社2026年7月請求書');
+});
