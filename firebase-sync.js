@@ -104,6 +104,11 @@ async function syncState(payload, {uid, expectedGeneration, merge}) {
     window.NinqData.validateBackup(payload);
     const remoteGeneration = remote?.state?.restoreGeneration || 'initial';
     const restore = payload.state.pendingRestore;
+    if (remote && restore && remoteGeneration === restore.base &&
+        (!Number.isSafeInteger(restore.baseRevision) || restore.baseRevision !== (main.revision || 0))) {
+      // A restore queued against an old cloud state must not overwrite newer phone edits.
+      return {conflict:true,restoreConflict:true,payload:remote};
+    }
     if (remote && remoteGeneration !== expectedGeneration && remoteGeneration !== payload.state.restoreGeneration) {
       window.NinqData.validateBackup(remote);
       return {conflict:true, payload:remote};

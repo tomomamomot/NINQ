@@ -17,6 +17,8 @@ function finishAccountStartup() {
 let cloudIssueWasLocal = false;
 let savingInvoice = false;
 let pendingInvoiceDeletion = null;
+let pendingCloudReceive = null;
+let receivingCloud = false;
 function mergeSafeStates(a, b) {
   return NinqData.mergeStates(normalizeState(a), normalizeState(b), mergeSettingsBySection);
 }
@@ -39,6 +41,7 @@ function activateAccount(user) {
   firebaseUser = user; activeOwner = owner; accountReady = true; storageFailure = ''; cloudIssue = ''; cloudIssueWasLocal = false;
   state = loadState(); localRevision = 0;
   selectedInvoiceId = ''; invoiceRevisionDraft = null; pendingBackup = null; setBackupOperationStatus('');
+  pendingCloudReceive=null;document.getElementById('cloud-receive-preview')?.remove();
   document.getElementById('backup-preview')?.remove();
   closeModal(); closeDayModal(); closeExpenseQuickEdit(); closeSheetPage();
   selectedCompany = ''; activeScreen = 'cal';
@@ -51,7 +54,7 @@ function activateAccount(user) {
   if (user) syncFirebaseCloud({auto:true, reason:'startup'});
 }
 async function safeSyncCloud({auto = false, reason = ''} = {}) {
-  if (pendingBackup) return; // Keep the reviewed local state stable during recovery.
+  if (pendingBackup || pendingCloudReceive || receivingCloud) return; // Keep reviewed data stable.
   if (activeScreen === 'st') flushSettingsAutosave();
   if (!firebaseUser || activeOwner !== firebaseUser.uid || !firebaseAvailable() || storageBlocked) return;
   if (storageFailure && !await retryLocalStorage(activeOwner,accountEpoch)) return;
@@ -68,10 +71,10 @@ async function safeSyncCloud({auto = false, reason = ''} = {}) {
     const payload = {...firebaseSyncPayload(), state:submitted};
     const result = await window.NinqFirebaseCloud.syncState(payload, {uid, expectedGeneration, merge:mergeSafeStates});
     if (!accountMatches(uid, epoch)) return;
-    if (pendingBackup || state.restoreGeneration !== submitted.restoreGeneration) { firebaseSyncQueued = true; return; }
+    if (pendingBackup || pendingCloudReceive || receivingCloud || state.restoreGeneration !== submitted.restoreGeneration) { firebaseSyncQueued = true; return; }
     if (result.conflict) {
       if (state.pendingRestore) {
-        cloudIssue = 'この端末の復元データを保持しています。クラウド側の復元履歴が異なるため、自動で置き換えず同期を停止しました';
+        cloudIssue = 'この端末の復元データを保持しています。クラウドが更新されているため、自動上書きを停止しました。スマホの送信完了後、「クラウドの最新データを確認」から受け取れます。';
         saveSyncPending(true,'restore-conflict'); setSyncLog(cloudIssue); return;
       }
       saveRecovery('別端末で復元済み：この端末のデータを退避', state);
@@ -89,7 +92,7 @@ async function safeSyncCloud({auto = false, reason = ''} = {}) {
       if (!accountMatches(uid,epoch)) return;
       if (pendingBackup || state.restoreGeneration !== submitted.restoreGeneration) { firebaseSyncQueued=true;return; }
     }
-    saveSyncMeta({lastSyncedAt:new Date().toISOString(),lastCloudModifiedAt:result.payload.modifiedAt || '',lastLocalModifiedAt:localModifiedAt()});
+    saveSyncMeta({lastSyncedAt:new Date().toISOString(),lastCloudModifiedAt:result.payload.modifiedAt || '',cloudRevision:result.payload.revision || 0,lastLocalModifiedAt:localModifiedAt()});
     const changedDuringSync = !result.conflict && revision + 1 !== localRevision;
     saveSyncPending(changedDuringSync, changedDuringSync ? 'save' : '');
     if (changedDuringSync) firebaseSyncQueued = true;
@@ -134,6 +137,7 @@ function importGuestData() {
   } catch (error) { setSyncLog(error.message); }
 }
 function prepareBackup(payload) {
+  pendingCloudReceive=null;document.getElementById('cloud-receive-preview')?.remove();
   const next = normalizeState(NinqData.validateBackup(payload));
   pendingBackup = next; pendingBackupOwner = activeOwner;
   window.clearTimeout(firebaseSyncTimer);
@@ -203,6 +207,55 @@ function setBackupOperationStatus(message) {
   const host = document.getElementById('backup-operation-status');
   if (host) { host.textContent = message; host.hidden = !message; }
 }
+async function previewCloudReceive() {
+  if(receivingCloud || !firebaseUser || storageBlocked) return;
+  if(pendingBackup) {setBackupOperationStatus('バックアップの読み込み確認をキャンセルしてから、クラウドの最新データを確認してください。');return;}
+  const owner=activeOwner,epoch=accountEpoch;
+  receivingCloud=true;
+  try {
+    const payload=await window.NinqFirebaseCloud.readState({uid:owner});
+    if(!accountMatches(owner,epoch))return;
+    if(!payload)throw new Error('クラウドにデータがありません。正しいデータがあるスマホで先に同期してください。');
+    const next=normalizeState(NinqData.validateBackup(payload));
+    pendingCloudReceive={owner,epoch,revision:localRevision,payload,serialized:JSON.stringify(payload)};
+    document.getElementById('cloud-receive-preview')?.remove();
+    const panel=document.createElement('section');panel.id='cloud-receive-preview';panel.className='safety-panel';
+    panel.innerHTML=`<strong>クラウドの最新データを確認</strong><p>この端末：${state.entries.length}予定・${state.invoices.length}控え<br>クラウド：${next.entries.length}予定・${next.invoices.length}控え</p><p>スマホの同期結果と件数が合っていることを確認してください。この端末の元データは復旧用コピーに残します。クラウドの内容は変更しません。</p><button data-cloud-receive-confirm>この端末をクラウドの内容に合わせる</button><button data-cloud-receive-cancel>キャンセル</button>`;
+    document.getElementById('sc-sync').appendChild(panel);panel.scrollIntoView?.({block:'nearest'});
+    setBackupOperationStatus('');
+  } catch(error) {if(accountMatches(owner,epoch))setBackupOperationStatus(`クラウドを確認できませんでした：${error.message}`);}
+  finally {receivingCloud=false;}
+}
+async function confirmCloudReceive() {
+  const pending=pendingCloudReceive;
+  if(!pending || receivingCloud || !accountMatches(pending.owner,pending.epoch))return false;
+  receivingCloud=true;
+  const valid=()=>pendingCloudReceive===pending && accountMatches(pending.owner,pending.epoch) && localRevision===pending.revision;
+  try {
+    const latest=await window.NinqFirebaseCloud.readState({uid:pending.owner});
+    if(!valid())throw new Error('確認中に端末の状態が変わりました。もう一度「クラウドの最新データを確認」を押してください。');
+    if(JSON.stringify(latest)!==pending.serialized)throw new Error('確認中にクラウドが更新されました。もう一度「クラウドの最新データを確認」を押してください。');
+    const next=normalizeState(NinqData.validateBackup(latest));next.pendingRestore=null;
+    try {saveRecovery('クラウドの最新データを受け取る前');}
+    catch(error) {
+      const raw=JSON.stringify({app:'NINQ',version:3,reason:'クラウドの最新データを受け取る前',exportedAt:new Date().toISOString(),state});
+      await NinqRecoveryStore.archive(scopedKey(`ninq-recovery-${Date.now()}-${crypto.randomUUID()}`),raw,pending.owner);
+    }
+    if(!valid())throw new Error('端末の状態が変わったため受け取りを中止しました。元データは保持しています。');
+    if(!saveState(next)) {
+      await archiveLocalRecoveryCopies(pending.owner,pending.epoch);
+      if(!valid() || !saveState(next))throw new Error('端末に保存できませんでした。元データは保持しています。');
+    }
+    state=next;pendingCloudReceive=null;selectedInvoiceId='';invoiceRevisionDraft=null;cloudIssue='';cloudIssueWasLocal=false;
+    saveSyncMeta({lastSyncedAt:new Date().toISOString(),lastCloudModifiedAt:latest.modifiedAt||'',cloudRevision:latest.revision||0,lastLocalModifiedAt:localModifiedAt()});saveSyncPending(false,'');
+    document.getElementById('cloud-receive-preview')?.remove();
+    setBackupOperationStatus(`クラウドの最新データを受け取りました：${state.entries.length}予定・${state.invoices.length}控え。以後は通常の自動同期を使えます。`);
+    renderAll();return true;
+  } catch(error) {
+    if(accountMatches(pending.owner,pending.epoch))setBackupOperationStatus(`受け取りは完了していません：${error.message}`);
+    return false;
+  } finally {receivingCloud=false;}
+}
 function commitBackup(mode, {confirmed = false} = {}) {
   if (!pendingBackup || pendingBackupOwner !== activeOwner) return false;
   try {
@@ -218,7 +271,7 @@ function commitBackup(mode, {confirmed = false} = {}) {
     } else {
       next = clone(pendingBackup);
       next.restoreGeneration = crypto.randomUUID();
-      next.pendingRestore = {base:state.pendingRestore?.base || state.restoreGeneration || 'initial'};
+      next.pendingRestore = {base:state.pendingRestore?.base || state.restoreGeneration || 'initial',baseRevision:state.pendingRestore?.baseRevision ?? loadSyncMeta().cloudRevision ?? null};
       const kept = new Set(next.entries.map(entry => entry.id));
       next.deletedEntryIds = {...state.deletedEntryIds, ...next.deletedEntryIds};
       for (const entry of state.entries) if (!kept.has(entry.id)) next.deletedEntryIds[entry.id] = new Date().toISOString();
@@ -320,6 +373,7 @@ function renderSafetySync() {
   const host = document.getElementById('safety-sync'); if (!host) return;
   host.innerHTML = `<p>${firebaseUser ? escapeHtml(firebaseUser.email || 'ログイン済み') : '端末内のデータを使用中'}</p>${firebaseUser ? '<button data-logout>ログアウト</button><button data-import-guest>この端末の旧データを取り込む</button>' : ''}<button data-retry-save>保存・同期を再試行</button><button data-rescue>復旧用データを書き出す</button><details><summary>復旧用コピー</summary><div id="recovery-list"></div></details>`;
   renderRecoveryList(); renderSaveStatus();
+  if(firebaseUser) {const button=document.createElement('button');button.dataset.cloudReceive='';button.textContent='クラウドの最新データを確認';host.appendChild(button);}
 }
 function renderExpenseEditor() {
   const host = document.getElementById('st-expense-list'); if (!host) return;
@@ -427,6 +481,9 @@ function initSafetyUi() {
   document.addEventListener('click', async event => {
     const button = event.target.closest('button'); if (!button) return;
     const data = button.dataset;
+    if ('cloudReceive' in data) return previewCloudReceive();
+    if ('cloudReceiveConfirm' in data) return confirmCloudReceive();
+    if ('cloudReceiveCancel' in data) {pendingCloudReceive=null;document.getElementById('cloud-receive-preview')?.remove();setBackupOperationStatus('クラウドからの受け取りを取り消しました。予定は変更していません。');return;}
     if ('logout' in data) { if (activeScreen === 'st') flushSettingsAutosave(); await window.NinqFirebaseCloud.signOut(); return; }
     if ('importGuest' in data) return importGuestData();
     if ('retrySave' in data) { if (saveState()) syncFirebaseCloud({reason:'save'}); return; }

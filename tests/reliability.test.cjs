@@ -51,7 +51,7 @@ test('in-flight generation conflict cannot undo newly restored local state',asyn
 });
 test('pending restore conflict retains restored data and does not claim sync success',async()=>{
  const {run}=app();run(`activeOwner='A';firebaseUser={uid:'A'};state.pendingRestore={base:'initial'};state.restoreGeneration='local';window.NinqFirebaseCloud={syncState:async()=>({conflict:true,payload:{state:{entries:[],settings:{},restoreGeneration:'remote'}}})};`);
- await run('safeSyncCloud()');assert.equal(run('state.entries.length'),1);assert.equal(run('state.restoreGeneration'),'local');assert.equal(run('loadSyncPending().pending'),true);assert.match(run('cloudIssue'),/同期を停止/);
+ await run('safeSyncCloud()');assert.equal(run('state.entries.length'),1);assert.equal(run('state.restoreGeneration'),'local');assert.equal(run('loadSyncPending().pending'),true);assert.match(run('cloudIssue'),/自動上書きを停止/);
 });
 function app(initial=[]){
   const memory=new Map(initial),nodes=new Map();
@@ -186,7 +186,7 @@ test('two large concurrent writers retain both changes and stale parts are ignor
  const c=cloud();await Promise.all(['phone','pc'].map(id=>c.write({version:3,state:{entries:[entry(id,{notes:'日本語😀'.repeat(70000)})],settings:{},restoreGeneration:'initial'}})));
  assert.deepEqual(c.get().payload.state.entries.map(e=>e.id).sort(),['pc','phone']);assert.ok(c.retries()>0);
  const count=c.documents().get('users/A/state/main').partCount;
- await c.write({version:3,state:{entries:[entry('restored')],settings:{},restoreGeneration:'new',pendingRestore:{base:'initial'}}});
+ await c.write({version:3,state:{entries:[entry('restored')],settings:{},restoreGeneration:'new',pendingRestore:{base:'initial',baseRevision:c.get().payload.revision}}});
  assert.ok(count>c.documents().get('users/A/state/main').partCount);
  assert.deepEqual(c.get().payload.state.entries.map(e=>e.id),['restored']);
  const stale=await c.write({version:3,state:{entries:[entry('stale')],settings:{},restoreGeneration:'initial'}});
@@ -220,7 +220,43 @@ test('two cloud writers preserve independent records',async()=>{
  const c=cloud();await Promise.all(['a','b'].map(id=>c.write({version:3,state:{entries:[entry(id)],settings:{},restoreGeneration:'initial'}})));assert.deepEqual(c.get().payload.state.entries.map(e=>e.id).sort(),['a','b']);assert.ok(c.retries()>0);
 });
 test('cloud restore rejects older generation without writing',async()=>{
- const c=cloud();await c.write({version:3,state:{entries:[entry('a')],settings:{},restoreGeneration:'initial'}});await c.write({version:3,state:{entries:[],settings:{},restoreGeneration:'new',pendingRestore:{base:'initial'}}});const result=await c.write({version:3,state:{entries:[entry('a')],settings:{},restoreGeneration:'initial'}});assert.equal(result.conflict,true);assert.equal(c.get().payload.state.entries.length,0);
+ const c=cloud();await c.write({version:3,state:{entries:[entry('a')],settings:{},restoreGeneration:'initial'}});await c.write({version:3,state:{entries:[],settings:{},restoreGeneration:'new',pendingRestore:{base:'initial',baseRevision:c.get().payload.revision}}});const result=await c.write({version:3,state:{entries:[entry('a')],settings:{},restoreGeneration:'initial'}});assert.equal(result.conflict,true);assert.equal(c.get().payload.state.entries.length,0);
+});
+test('queued PC replacement cannot overwrite newer phone edits in the same generation',async()=>{
+ const c=cloud();await c.write({version:3,state:{entries:[entry('old')],settings:{},restoreGeneration:'initial'}});
+ const baseRevision=c.get().payload.revision;
+ await c.write({version:3,state:{entries:[entry('phone-new')],settings:{},restoreGeneration:'initial'}});
+ for(const pendingRestore of [{base:'initial'},{base:'initial',baseRevision}]) {
+   const before=JSON.stringify([...c.documents()]);
+   const result=await c.write({version:3,state:{entries:[entry('old')],settings:{},restoreGeneration:'pc-restore',pendingRestore}});
+   assert.equal(result.restoreConflict,true);assert.equal(JSON.stringify([...c.documents()]),before);
+ }
+});
+test('PC explicitly receives latest cloud without sending its queued restore',async()=>{
+ const a=app(),c=cloud();await c.write({version:3,state:{entries:[entry('phone-new')],settings:{},restoreGeneration:'initial'}});
+ a.run(`activeOwner='A';firebaseUser={uid:'A'};state.pendingRestore={base:'initial'};state.restoreGeneration='old-pc-restore';`);
+ a.context.window.NinqFirebaseCloud={readState:options=>c.context.readState(options)};
+ const before=JSON.stringify([...c.documents()]);
+ await a.run('previewCloudReceive()');assert.equal(a.run('state.entries[0].id'),'a');
+ assert.equal(await a.run('confirmCloudReceive()'),true);assert.equal(a.run('state.entries[0].id'),'phone-new');assert.equal(a.run('state.pendingRestore'),null);
+ assert.equal(JSON.stringify([...c.documents()]),before);assert.ok([...a.memory.keys()].some(k=>k.startsWith('ninq-recovery-')));
+ assert.equal(a.run('loadSyncMeta().cloudRevision'),c.get().payload.revision);
+});
+test('cloud receive refuses stale confirmation after local or cloud edits',async()=>{
+ for(const changed of ['local','cloud']) {
+   const a=app(),c=cloud();await c.write({version:3,state:{entries:[entry('phone')],settings:{}}});
+   a.run(`activeOwner='A';firebaseUser={uid:'A'};`);a.context.window.NinqFirebaseCloud={readState:options=>c.context.readState(options)};
+   await a.run('previewCloudReceive()');
+   if(changed==='local')a.run('state.entries[0].qty=2;saveState();');
+   else await c.write({version:3,state:{entries:[entry('new')],settings:{}}});
+   assert.equal(await a.run('confirmCloudReceive()'),false);assert.equal(a.run('state.entries[0].id'),'a');
+ }
+});
+test('cloud receive preserves original state if recovery and database storage both fail',async()=>{
+ const a=app(),c=cloud();await c.write({version:3,state:{entries:[entry('phone')],settings:{}}});
+ a.run(`activeOwner='A';firebaseUser={uid:'A'};`);a.context.window.NinqFirebaseCloud={readState:options=>c.context.readState(options)};
+ await a.run('previewCloudReceive()');a.run(`localStorage.setItem=()=>{throw Error('quota')};globalThis.NinqRecoveryStore={archive:async()=>{throw Error('quota')}};`);
+ assert.equal(await a.run('confirmCloudReceive()'),false);assert.equal(a.run('state.entries[0].id'),'a');
 });
 test('cloud rejects oversized payload and mismatched account',async()=>{
  const c=cloud();await assert.rejects(c.write({state:{entries:[],settings:{text:'x'.repeat(6500000)}}}),/上限/);assert.equal(c.get(),null);c.context.currentUser={uid:'B'};await assert.rejects(c.write({state:{entries:[],settings:{}}}),/ログイン/);
