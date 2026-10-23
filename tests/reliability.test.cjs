@@ -1,6 +1,37 @@
 const {test}=require('node:test'), assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {randomUUID}=require('node:crypto'), data=require('../data-core.js');
 const entry=(id,extra={})=>({id,date:'2026-09-06',company:'Test',qty:1,unitRate:20000,updatedAt:'2026-09-06T00:00:00Z',...extra});
+test('confirmed replacement restores 580 entries and reports local success separately from sync',()=>{
+ const {run}=app();run(`state.entries=Array.from({length:562},(_,i)=>({...state.entries[0],id:'old'+i}));prepareBackup({entries:Array.from({length:580},(_,i)=>({...state.entries[0],id:'phone'+i})),settings:{}});confirm=()=>{throw Error('unexpected native dialog')};`);
+ assert.equal(run(`commitBackup('replace',{confirmed:true})`),true);assert.equal(run('state.entries.length'),580);
+ assert.match(run(`document.getElementById('backup-operation-status').textContent`),/580予定.*クラウド同期の完了とは別/);
+ assert.equal(run('loadSyncPending().pending'),true);
+});
+test('recovery quota failure preserves original state and leaves a persistent explanation',()=>{
+ const {run}=app();run(`prepareBackup({entries:[],settings:{}});localStorage.setItem=()=>{throw Error('quota')};`);
+ assert.equal(run(`commitBackup('replace',{confirmed:true})`),false);assert.equal(run('state.entries.length'),1);
+ assert.match(run(`document.getElementById('backup-operation-status').textContent`),/復旧用コピー.*保存できません/);
+ assert.equal(run(`document.getElementById('backup-operation-status').hidden`),false);
+});
+test('retry after state write failure reuses verified recovery and preserves original until success',()=>{
+ const {run,memory}=app();run(`prepareBackup({entries:[],settings:{}});window.originalSet=localStorage.setItem;localStorage.setItem=(k,v)=>{if(k.startsWith('ninq-v2'))throw Error('quota');window.originalSet(k,v)};`);
+ assert.equal(run(`commitBackup('replace',{confirmed:true})`),false);assert.equal(run('state.entries.length'),1);
+ assert.equal(run(`commitBackup('replace',{confirmed:true})`),false);
+ assert.equal([...memory.keys()].filter(k=>k.startsWith('ninq-recovery-')).length,1);
+ run(`localStorage.setItem=window.originalSet;`);assert.equal(run(`commitBackup('replace',{confirmed:true})`),true);
+});
+test('backup review pauses cloud requests',async()=>{
+ const {run}=app();run(`activeOwner='A';firebaseUser={uid:'A'};window.calls=0;window.NinqFirebaseCloud={syncState:()=>{window.calls++;throw Error('unexpected')}};prepareBackup({entries:[],settings:{}});`);
+ await run('safeSyncCloud()');assert.equal(run('window.calls'),0);
+});
+test('in-flight generation conflict cannot undo newly restored local state',async()=>{
+ const {run}=app();run(`activeOwner='A';firebaseUser={uid:'A'};window.NinqFirebaseCloud={syncState:()=>new Promise(resolve=>window.finish=resolve)};window.work=safeSyncCloud();prepareBackup({entries:[],settings:{}});commitBackup('replace',{confirmed:true});window.generation=state.restoreGeneration;window.finish({conflict:true,payload:{state:normalizeState({entries:[${JSON.stringify(entry('old'))}],settings:{},restoreGeneration:'remote'})}});`);
+ await run('window.work');assert.equal(run('state.entries.length'),0);assert.equal(run('state.restoreGeneration'),run('window.generation'));
+});
+test('pending restore conflict retains restored data and does not claim sync success',async()=>{
+ const {run}=app();run(`activeOwner='A';firebaseUser={uid:'A'};state.pendingRestore={base:'initial'};state.restoreGeneration='local';window.NinqFirebaseCloud={syncState:async()=>({conflict:true,payload:{state:{entries:[],settings:{},restoreGeneration:'remote'}}})};`);
+ await run('safeSyncCloud()');assert.equal(run('state.entries.length'),1);assert.equal(run('state.restoreGeneration'),'local');assert.equal(run('loadSyncPending().pending'),true);assert.match(run('cloudIssue'),/同期を停止/);
+});
 function app(initial=[]){
   const memory=new Map(initial),nodes=new Map();
   const el=()=>({value:'',textContent:'',innerHTML:'',dataset:{},style:{removeProperty(){}},classList:{contains:()=>false,add(){},remove(){},toggle(){}},remove(){},appendChild(){}});

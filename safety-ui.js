@@ -38,7 +38,7 @@ function activateAccount(user) {
   googleAccessTokens.clear();
   firebaseUser = user; activeOwner = owner; accountReady = true; storageFailure = ''; cloudIssue = ''; cloudIssueWasLocal = false;
   state = loadState(); localRevision = 0;
-  selectedInvoiceId = ''; invoiceRevisionDraft = null; pendingBackup = null;
+  selectedInvoiceId = ''; invoiceRevisionDraft = null; pendingBackup = null; setBackupOperationStatus('');
   document.getElementById('backup-preview')?.remove();
   closeModal(); closeDayModal(); closeExpenseQuickEdit(); closeSheetPage();
   selectedCompany = ''; activeScreen = 'cal';
@@ -51,6 +51,7 @@ function activateAccount(user) {
   if (user) syncFirebaseCloud({auto:true, reason:'startup'});
 }
 async function safeSyncCloud({auto = false, reason = ''} = {}) {
+  if (pendingBackup) return; // Keep the reviewed local state stable during recovery.
   if (activeScreen === 'st') flushSettingsAutosave();
   if (!firebaseUser || activeOwner !== firebaseUser.uid || !firebaseAvailable() || storageBlocked || storageFailure) return;
   if (auto && !state.settings.googleSyncEnabled) return;
@@ -65,7 +66,12 @@ async function safeSyncCloud({auto = false, reason = ''} = {}) {
     const payload = {...firebaseSyncPayload(), state:submitted};
     const result = await window.NinqFirebaseCloud.syncState(payload, {uid, expectedGeneration, merge:mergeSafeStates});
     if (!accountMatches(uid, epoch)) return;
+    if (pendingBackup || state.restoreGeneration !== submitted.restoreGeneration) { firebaseSyncQueued = true; return; }
     if (result.conflict) {
+      if (state.pendingRestore) {
+        cloudIssue = 'この端末の復元データを保持しています。クラウド側の復元履歴が異なるため、自動で置き換えず同期を停止しました';
+        saveSyncPending(true,'restore-conflict'); setSyncLog(cloudIssue); return;
+      }
       saveRecovery('別端末で復元済み：この端末のデータを退避', state);
       state = normalizeState(result.payload.state || result.payload);
       state.pendingRestore = null;
@@ -125,17 +131,29 @@ function importGuestData() {
 function prepareBackup(payload) {
   const next = normalizeState(NinqData.validateBackup(payload));
   pendingBackup = next; pendingBackupOwner = activeOwner;
+  window.clearTimeout(firebaseSyncTimer);
+  backupRecoveryRevision = -1;
+  setBackupOperationStatus('');
   const host = document.getElementById('sc-sync');
   document.getElementById('backup-preview')?.remove();
   const panel = document.createElement('section'); panel.id = 'backup-preview'; panel.className = 'safety-panel';
-  panel.innerHTML = `<strong>読み込み内容を確認</strong><p>現在 ${state.entries.length}予定・${(state.invoices || []).length}確定請求書 → 読み込み ${next.entries.length}予定・${next.invoices.length}確定請求書</p><button data-backup-mode="add">追加</button><button data-backup-mode="replace">置き換え</button><button data-backup-cancel>キャンセル</button>`;
+  panel.innerHTML = `<strong>読み込み内容を確認</strong><p>現在 ${state.entries.length}予定・${(state.invoices || []).length}控え → 読み込み ${next.entries.length}予定・${next.invoices.length}控え</p><p>確認中は、この端末の自動同期を一時停止しています。</p><button data-backup-mode="add">追加</button><button data-backup-mode="replace">置き換え</button><button data-backup-cancel>キャンセル</button><div id="backup-replace-confirm" hidden><p>この端末をバックアップの内容に置き換えます。元のデータは復旧用コピーに残します。</p><button data-backup-confirm-replace>${next.entries.length}予定に置き換える</button><button data-backup-keep>戻る</button></div>`;
   host.appendChild(panel);
+  panel.scrollIntoView?.({block:'nearest'});
 }
-function commitBackup(mode) {
+let backupRecoveryRevision = -1;
+function setBackupOperationStatus(message) {
+  const host = document.getElementById('backup-operation-status');
+  if (host) { host.textContent = message; host.hidden = !message; }
+}
+function commitBackup(mode, {confirmed = false} = {}) {
   if (!pendingBackup || pendingBackupOwner !== activeOwner) return false;
   try {
-    if (mode === 'replace' && !confirm('現在のデータを置き換えます。元データの復旧用コピーを端末に残します。続けますか？')) return false;
-    saveRecovery('バックアップ読み込み前');
+    if (mode === 'replace' && !confirmed && !confirm('現在のデータを置き換えます。元データの復旧用コピーを端末に残します。続けますか？')) return false;
+    if (backupRecoveryRevision !== localRevision) {
+      try { saveRecovery('バックアップ読み込み前'); backupRecoveryRevision = localRevision; }
+      catch(error) { setBackupOperationStatus(`読み込みは完了していません。元データの復旧用コピーをこの端末に保存できませんでした。クラウドとは別の、ブラウザー内の保存容量・保存権限を確認してください。元データは変更していません。\n詳細：${error.message}`); return false; }
+    }
     let next;
     if (mode === 'add') {
       next = mergeSafeStates(state, {...pendingBackup, deletedEntryIds:{},deletedReceiptIds:{},deletedInvoiceIds:{}});
@@ -153,11 +171,14 @@ function commitBackup(mode) {
       for (const invoice of state.invoices) if (!keptInvoices.has(invoice.id)) next.deletedInvoiceIds[invoice.id] = new Date().toISOString();
       for (const invoice of next.invoices) delete next.deletedInvoiceIds[invoice.id];
     }
-    if (!saveState(next)) return false;
+    if (!saveState(next)) { setBackupOperationStatus(`読み込みは完了していません。${storageFailure || 'この端末への保存に失敗しました。'} 元の予定を保持しています。`); return false; }
     state = next; pendingBackup = null; selectedInvoiceId = ''; invoiceRevisionDraft = null;
+    cloudIssue = ''; cloudIssueWasLocal = false;
+    saveSyncPending(true,'restore');
     document.getElementById('backup-preview')?.remove();
+    setBackupOperationStatus(`この端末への${mode === 'replace' ? '置き換え' : '追加'}が完了しました：${state.entries.length}予定・${state.invoices.length}控え。クラウド同期の完了とは別です。`);
     renderAll(); scheduleFirebaseAutoSync({reason:'save'}); return true;
-  } catch (error) { setSyncLog(`読み込みを中止しました：${error.message}`); return false; }
+  } catch (error) { setBackupOperationStatus(`読み込みを中止しました：${error.message}`); return false; }
 }
 function renderSaveStatus() {
   const host = document.getElementById('home-storage-status'); if (!host) return;
@@ -321,6 +342,7 @@ function reusePreviousEntry() {
 }
 function initSafetyUi() {
   const syncPanel = document.getElementById('safety-sync');
+  document.getElementById('sc-sync').appendChild(document.getElementById('backup-operation-status'));
   document.getElementById('sc-sync').appendChild(syncPanel); syncPanel.classList.remove('hidden');
   document.addEventListener('change', event => {
     if (event.target.matches('[data-invoice-date]')) { if (!setInvoiceDate(event.target.value)) { alert('請求書の日付を入力してください。'); renderInvoiceScreen(); } return; }
@@ -340,8 +362,11 @@ function initSafetyUi() {
       downloadText('ninq-rescue.json',raw || '{}','application/json'); return;
     }
     if (data.recoveryExport) { downloadText('ninq-recovery.json',localStorage.getItem(data.recoveryExport),'application/json'); return; }
+    if (data.backupMode === 'replace') { document.getElementById('backup-replace-confirm').hidden = false; return; }
     if (data.backupMode) return commitBackup(data.backupMode);
-    if ('backupCancel' in data) { pendingBackup = null; document.getElementById('backup-preview')?.remove(); return; }
+    if ('backupConfirmReplace' in data) return commitBackup('replace',{confirmed:true});
+    if ('backupKeep' in data) { document.getElementById('backup-replace-confirm').hidden = true; return; }
+    if ('backupCancel' in data) { pendingBackup = null; document.getElementById('backup-preview')?.remove(); setBackupOperationStatus('読み込みを取り消しました。予定は変更していません。'); scheduleFirebaseAutoSync({reason:'poll'}); return; }
     if (data.diagnosticEntry) { const entry = state.entries.find(item => item.id === data.diagnosticEntry); if (entry) { activeScreen = 'cal'; selectedDate = entry.date; cursor = startOfMonth(fromYmd(entry.date)); renderAll(); openModal(entry.type,entry.id); } return; }
     if (data.diagnosticInvoice) { activeScreen = 'inv'; selectedInvoiceId = data.diagnosticInvoice; invoiceRevisionDraft = null; renderAll(); return; }
     if ('invoiceDelete' in data) return requestInvoiceDeletion(selectedInvoiceId);
